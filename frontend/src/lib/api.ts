@@ -30,3 +30,39 @@ export async function api<T = Record<string, unknown>>(
 
   return res.json() as Promise<T>;
 }
+
+export async function apiUpload<T = Record<string, unknown>>(
+  path: string,
+  file: File
+): Promise<T> {
+  const token =
+    typeof window !== "undefined" ? localStorage.getItem("ja_token") : null;
+
+  const formData = new FormData();
+  formData.append("resume", file);
+
+  const res = await fetch(`${API_URL}${path}`, {
+    method: "POST",
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(
+      (err as { error?: string }).error || `Upload failed: ${res.status}`
+    );
+  }
+
+  return res.json() as Promise<T>;
+}
+
+export async function trackActivity(action: string, metadata: Record<string, unknown> = {}) {
+  try {
+    await api("/activity", { method: "POST", body: { action, metadata } });
+  } catch {
+    // Silent fail for tracking
+  }
+}

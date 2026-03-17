@@ -1,12 +1,13 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { api } from "@/lib/api";
+import { api, trackActivity } from "@/lib/api";
 import { theme } from "@/lib/theme";
 import { Icons } from "./Icons";
 import { Tag } from "./Tag";
 import { StatCard } from "./StatCard";
 import { JobCard } from "./JobCard";
+import { InsightsModal } from "./InsightsModal";
 import type { User, Profile, Match, MatchStats } from "@/lib/types";
 
 type TabId = "matches" | "profile" | "settings";
@@ -28,6 +29,7 @@ export function Dashboard({
   });
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [showInsights, setShowInsights] = useState(false);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -96,7 +98,10 @@ export function Dashboard({
           {navItems.map((item) => (
             <button
               key={item.id}
-              onClick={() => setTab(item.id)}
+              onClick={() => {
+                setTab(item.id);
+                trackActivity("tab_switch", { tab: item.id });
+              }}
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -117,23 +122,48 @@ export function Dashboard({
             </button>
           ))}
         </div>
-        <button
-          onClick={onLogout}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            padding: "8px 14px",
-            background: "transparent",
-            border: `1px solid ${theme.border}`,
-            borderRadius: 8,
-            color: theme.textMuted,
-            fontSize: 12,
-            cursor: "pointer",
-          }}
-        >
-          {Icons.logout} Sign Out
-        </button>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {/* AI Insights Button */}
+          <button
+            onClick={() => {
+              setShowInsights(true);
+              trackActivity("open_insights");
+            }}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "8px 14px",
+              background: theme.accentSoft,
+              border: `1px solid ${theme.accent}40`,
+              borderRadius: 8,
+              color: theme.accent,
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: "pointer",
+              transition: "all 0.2s",
+            }}
+          >
+            {Icons.zap} AI Insights
+          </button>
+          <button
+            onClick={onLogout}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "8px 14px",
+              background: "transparent",
+              border: `1px solid ${theme.border}`,
+              borderRadius: 8,
+              color: theme.textMuted,
+              fontSize: 12,
+              cursor: "pointer",
+            }}
+          >
+            {Icons.logout} Sign Out
+          </button>
+        </div>
       </header>
 
       <div
@@ -467,6 +497,7 @@ export function Dashboard({
                             ? { ...prev, notification_method: m }
                             : prev
                         );
+                        trackActivity("change_notification", { method: m });
                       }}
                       style={{
                         padding: "10px 20px",
@@ -627,6 +658,9 @@ export function Dashboard({
           </div>
         )}
       </div>
+
+      {/* AI Insights Modal */}
+      {showInsights && <InsightsModal onClose={() => setShowInsights(false)} />}
     </div>
   );
 }

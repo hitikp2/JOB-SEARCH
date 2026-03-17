@@ -41,3 +41,19 @@ export interface MatchStats {
   notifications_sent: number;
   avg_score: number;
 }
+
+export interface Insight {
+  type: string;
+  icon: string;
+  title: string;
+  description: string;
+  priority: "high" | "medium" | "low";
+}
+
+export interface TestResult {
+  database: boolean;
+  ai: boolean;
+  ai_provider?: string;
+  all_ok: boolean;
+  timestamp: string;
+}

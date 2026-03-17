@@ -8,6 +8,8 @@ import authRoutes from './routes/auth.js';
 import profileRoutes from './routes/profile.js';
 import jobRoutes from './routes/jobs.js';
 import matchRoutes from './routes/matches.js';
+import activityRoutes from './routes/activity.js';
+import insightsRoutes from './routes/insights.js';
 import { runJobWorker } from './workers/jobWorker.js';
 
 dotenv.config();
@@ -36,6 +38,8 @@ app.use('/api/auth', authRoutes);
 app.use('/api/profile', profileRoutes);
 app.use('/api/jobs', jobRoutes);
 app.use('/api/matches', matchRoutes);
+app.use('/api/activity', activityRoutes);
+app.use('/api/insights', insightsRoutes);
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() });

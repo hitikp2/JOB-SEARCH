@@ -82,6 +82,20 @@ CREATE TABLE notification_log (
 );
 
 -- ============================================
+-- USER ACTIVITY TABLE (experience tracking)
+-- ============================================
+CREATE TABLE user_activity (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  action TEXT NOT NULL, -- 'view_profile' | 'update_profile' | 'resume_upload' | 'view_matches' | 'view_insights' | 'test_connection' | 'click_job' | etc.
+  metadata JSONB DEFAULT '{}',
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_user_activity_user ON user_activity(user_id, created_at DESC);
+CREATE INDEX idx_user_activity_action ON user_activity(action);
+
+-- ============================================
 -- ROW LEVEL SECURITY
 -- ============================================
 ALTER TABLE users ENABLE ROW LEVEL SECURITY;
@@ -118,3 +132,10 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER users_updated_at
   BEFORE UPDATE ON users
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+-- User activity: users see only their own activity
+ALTER TABLE user_activity ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Users read own activity" ON user_activity
+  FOR SELECT USING (auth.uid() = user_id);
+CREATE POLICY "Users insert own activity" ON user_activity
+  FOR INSERT WITH CHECK (auth.uid() = user_id);
