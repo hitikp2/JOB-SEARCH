@@ -10,15 +10,28 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 *
 // ── GET PROFILE ──
 router.get('/', authMiddleware, async (req, res) => {
   try {
-    const { data: user, error } = await supabase
+    // Try full column set first, fall back to base columns if new ones don't exist yet
+    let { data: user, error } = await supabase
       .from('users')
       .select('id, email, phone, primary_roles, seniority_level, years_experience, industries, skills, preferred_locations, remote_preference, salary_expectation, notification_method, profile_complete, job_sources, custom_sources, job_type, work_schedule, location_type, search_radius, sms_template, created_at')
       .eq('id', req.userId)
       .single();
 
-    if (error) throw error;
+    if (error) {
+      // Fallback: try without new columns (migration not yet run)
+      const fallback = await supabase
+        .from('users')
+        .select('id, email, phone, primary_roles, seniority_level, years_experience, industries, skills, preferred_locations, remote_preference, salary_expectation, notification_method, profile_complete, created_at')
+        .eq('id', req.userId)
+        .single();
+
+      if (fallback.error) throw fallback.error;
+      user = { ...fallback.data, job_sources: ['jsearch'], custom_sources: [], job_type: 'any', work_schedule: 'full_time', location_type: 'any', search_radius: 50, sms_template: null };
+    }
+
     res.json(user);
   } catch (err) {
+    console.error('[Profile] GET error:', err.message);
     res.status(500).json({ error: 'Failed to fetch profile' });
   }
 });
@@ -44,16 +57,34 @@ router.patch('/', authMiddleware, async (req, res) => {
       updates.profile_complete = true;
     }
 
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('users')
       .update(updates)
       .eq('id', req.userId)
       .select('id, email, phone, primary_roles, skills, preferred_locations, remote_preference, salary_expectation, notification_method, profile_complete, job_sources, custom_sources, job_type, work_schedule, location_type, search_radius, sms_template')
       .single();
 
-    if (error) throw error;
+    if (error) {
+      // Fallback: filter out new columns that may not exist yet
+      const baseKeys = ['phone','primary_roles','skills','preferred_locations','remote_preference','salary_expectation','notification_method','seniority_level','years_experience','industries'];
+      const baseUpdates = {};
+      for (const k of baseKeys) { if (updates[k] !== undefined) baseUpdates[k] = updates[k]; }
+      if (updates.profile_complete !== undefined) baseUpdates.profile_complete = updates.profile_complete;
+
+      if (Object.keys(baseUpdates).length > 0) {
+        const fb = await supabase.from('users').update(baseUpdates).eq('id', req.userId)
+          .select('id, email, phone, primary_roles, skills, preferred_locations, remote_preference, salary_expectation, notification_method, profile_complete')
+          .single();
+        if (fb.error) throw fb.error;
+        data = fb.data;
+      } else {
+        throw error;
+      }
+    }
+
     res.json(data);
   } catch (err) {
+    console.error('[Profile] PATCH error:', err.message);
     res.status(500).json({ error: 'Failed to update profile' });
   }
 });
