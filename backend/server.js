@@ -12,7 +12,6 @@ import experienceRoutes from './routes/experience.js';
 import trackerRoutes from './routes/tracker.js';
 import { runJobWorker, runQuickScan, runAIAnalysis } from './workers/jobWorker.js';
 import { sendNotification } from './services/notifications.js';
-import { extractResumeProfile, extractTextFromImage } from './services/ai.js';
 import supabase from './utils/supabase.js';
 import { authMiddleware } from './utils/auth.js';
 
@@ -89,39 +88,6 @@ app.post('/api/admin/test-sms', authMiddleware, async (req, res) => {
     }
   } catch (err) {
     res.status(500).json({ error: err.message });
-  }
-});
-
-// ── EXTRACT JOB FROM PHOTO ──
-app.post('/api/tracker/extract-photo', authMiddleware, async (req, res) => {
-  try {
-    const { image_data, mime_type } = req.body;
-    if (!image_data) return res.status(400).json({ error: 'image_data required' });
-
-    const text = await extractTextFromImage(image_data, mime_type || 'image/jpeg');
-
-    const { callAI } = await import('./services/ai.js');
-    const systemPrompt = `Extract job posting details from this text. Return ONLY valid JSON:
-{"title":"","company":"","location":"","salary":"","description":"","url":""}
-If a field is not found, use empty string. For description, summarize in 1-2 sentences.`;
-
-    let jobData;
-    try {
-      const aiModule = await import('./services/ai.js');
-      // Use the AI to parse the extracted text
-      jobData = { title: '', company: '', location: '', salary: '', description: text.slice(0, 600), url: '' };
-      // Try to extract structured data from the text
-      const lines = text.split('\n').filter(l => l.trim());
-      if (lines.length > 0) jobData.title = lines[0].slice(0, 100);
-      if (lines.length > 1) jobData.company = lines[1].slice(0, 100);
-    } catch (e) {
-      jobData = { title: 'Extracted Job', company: '', location: '', salary: '', description: text.slice(0, 600), url: '' };
-    }
-
-    res.json({ extracted: jobData, raw_text: text.slice(0, 1000) });
-  } catch (err) {
-    console.error('Photo extract error:', err);
-    res.status(500).json({ error: 'Failed to extract from photo' });
   }
 });
 
