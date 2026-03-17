@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Job Agent – AI Job Matching</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=Source+Serif+4:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0a0a12; --surface: #13131d; --card: #1a1a26; --card-hover: #222233;
+      --border: #1e1e30; --border-focus: #a78bfa; --text: #ededf4;
+      --text-muted: #8888a0; --text-dim: #5a5a72; --accent: #a78bfa;
+      --accent-soft: #a78bfa14; --accent-glow: #a78bfa40; --green: #34d399;
+      --green-soft: #34d39918; --amber: #fbbf24; --red: #ef4444;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Outfit', -apple-system, sans-serif; background: var(--bg); color: var(--text); -webkit-font-smoothing: antialiased; }
+    ::selection { background: var(--accent-glow); }
+    ::-webkit-scrollbar { width: 5px; } ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    @keyframes fadeUp { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes pulse { 0%,100% { opacity:1;transform:scale(1); } 50% { opacity:0.5;transform:scale(1.3); } }
+    .fade-up { animation: fadeUp 0.5s cubic-bezier(0.16,1,0.3,1) forwards; opacity: 0; }
+    .fade-d1 { animation-delay: 0.05s; } .fade-d2 { animation-delay: 0.1s; }
+    .fade-d3 { animation-delay: 0.15s; } .fade-d4 { animation-delay: 0.2s; }
+    input:focus, textarea:focus { border-color: var(--border-focus) !important; outline: none; }
+    .tag { display:inline-flex; align-items:center; padding:3px 10px; border-radius:6px; font-size:10.5px; font-weight:600; letter-spacing:0.6px; text-transform:uppercase; }
+    .btn { border:none; border-radius:10px; cursor:pointer; font-family:inherit; font-weight:600; transition:all 0.2s; }
+    .btn:disabled { opacity:0.5; cursor:not-allowed; }
+    .input { width:100%; padding:14px 16px; background:var(--surface); border:1px solid var(--border); border-radius:10px; color:var(--text); font-size:14px; font-family:inherit; transition:border-color 0.2s; outline:none; }
+    .card { background:var(--surface); border:1px solid var(--border); border-radius:16px; padding:24px; }
+    .label { font-size:10px; color:var(--text-dim); font-weight:700; text-transform:uppercase; letter-spacing:1.5px; margin-bottom:10px; }
+    .screen { min-height:100vh; display:flex; align-items:center; justify-content:center; }
+    .nav-btn { display:flex; align-items:center; gap:6px; padding:7px 16px; border:none; border-radius:8px; cursor:pointer; font-size:12.5px; font-weight:500; transition:all 0.2s; font-family:inherit; background:transparent; color:var(--text-dim); }
+    .nav-btn.active { background:var(--accent-soft); color:var(--accent); }
+    .grid-bg { position:fixed; inset:0; z-index:0; opacity:0.03; background-image:linear-gradient(#a78bfa 1px,transparent 1px),linear-gradient(90deg,#a78bfa 1px,transparent 1px); background-size:60px 60px; pointer-events:none; }
+    .match-card { border-radius:16px; padding:22px 24px; cursor:pointer; transition:all 0.3s cubic-bezier(0.16,1,0.3,1); background:var(--surface); border:1px solid var(--border); }
+    .match-card:hover { background:var(--card-hover); border-color:var(--border-focus); transform:translateY(-2px); box-shadow:0 8px 30px rgba(167,139,250,0.06); }
+    .stat-card { background:var(--surface); border:1px solid var(--border); border-radius:16px; padding:22px 20px; flex:1; min-width:140px; position:relative; overflow:hidden; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script type="text/babel">
+    const { useState, useEffect, useCallback } = React;
+
+    // API base = same origin
+    const API = window.location.origin + '/api';
+
+    async function api(path, opts = {}) {
+      const token = localStorage.getItem('ja_token');
+      const res = await fetch(API + path, {
+        ...opts,
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}), ...opts.headers },
+        body: opts.body ? JSON.stringify(opts.body) : undefined,
+      });
+      if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error || 'Request failed: ' + res.status); }
+      return res.json();
+    }
+
+    function Tag({ children, color = '#a78bfa', ghost }) {
+      return <span className="tag" style={{ background: ghost ? 'transparent' : color+'14', color, border: '1px solid '+color+(ghost?'40':'25') }}>{children}</span>;
+    }
+
+    function ScoreRing({ score, size = 44 }) {
+      const color = score >= 90 ? '#34d399' : score >= 80 ? '#a78bfa' : score >= 70 ? '#fbbf24' : '#6b7280';
+      const r = (size-6)/2, circ = 2*Math.PI*r, offset = circ-(score/110)*circ;
+      return (
+        <div style={{ position:'relative', width:size, height:size, flexShrink:0 }}>
+          <svg width={size} height={size} style={{ transform:'rotate(-90deg)' }}>
+            <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="#1e1e2e" strokeWidth="3"/>
+            <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={color} strokeWidth="3" strokeDasharray={circ} strokeDashoffset={offset} strokeLinecap="round" style={{ transition:'stroke-dashoffset 1s cubic-bezier(0.16,1,0.3,1)' }}/>
+          </svg>
+          <div style={{ position:'absolute', inset:0, display:'flex', alignItems:'center', justifyContent:'center', fontSize:12, fontWeight:700, color }}>{score}</div>
+        </div>
+      );
+    }
+
+    function timeAgo(d) { if(!d) return ''; const h=Math.floor((Date.now()-new Date(d).getTime())/3600000); return h<1?'Just now':h<24?h+'h ago':Math.floor(h/24)+'d ago'; }
+
+    // ── AUTH ──
+    function AuthScreen({ onAuth }) {
+      const [mode, setMode] = useState('login');
+      const [email, setEmail] = useState('');
+      const [password, setPassword] = useState('');
+      const [phone, setPhone] = useState('');
+      const [loading, setLoading] = useState(false);
+      const [error, setError] = useState('');
+
+      const submit = async (e) => {
+        e.preventDefault(); setError(''); setLoading(true);
+        try {
+          const data = await api(mode==='login'?'/auth/login':'/auth/signup', { method:'POST', body: mode==='login'?{email,password}:{email,password,phone} });
+          localStorage.setItem('ja_token', data.token);
+          onAuth(data.user);
+        } catch(e) { setError(e.message); }
+        setLoading(false);
+      };
+
+      return (
+        <div className="screen" style={{ background:'radial-gradient(ellipse at 50% 0%,var(--accent-soft) 0%,var(--bg) 60%)' }}>
+          <div style={{ width:400, padding:20 }}>
+            <div style={{ textAlign:'center', marginBottom:40 }}>
+              <div style={{ display:'inline-flex', alignItems:'center', justifyContent:'center', width:56, height:56, borderRadius:16, background:'linear-gradient(135deg,#a78bfa20,#34d39920)', border:'1px solid var(--accent-glow)', marginBottom:16 }}>
+                <span style={{ fontSize:24 }}>🎯</span>
+              </div>
+              <h1 style={{ fontSize:26, fontWeight:700, margin:'0 0 6px' }}>Job Agent</h1>
+              <p style={{ color:'var(--text-muted)', fontSize:14 }}>AI-powered job matching, delivered daily</p>
+            </div>
+            <div className="card" style={{ boxShadow:'0 8px 32px rgba(0,0,0,0.3)' }}>
+              <div style={{ display:'flex', gap:4, background:'var(--bg)', borderRadius:10, padding:4, marginBottom:24 }}>
+                {['login','signup'].map(m => (
+                  <button key={m} onClick={() => { setMode(m); setError(''); }} className="btn" style={{ flex:1, padding:'10px 0', borderRadius:8, fontSize:13, background:mode===m?'var(--accent)':'transparent', color:mode===m?'#fff':'var(--text-muted)' }}>
+                    {m==='login'?'Sign In':'Create Account'}
+                  </button>
+                ))}
+              </div>
+              <form onSubmit={submit} style={{ display:'flex', flexDirection:'column', gap:14 }}>
+                <input className="input" placeholder="Email" type="email" value={email} onChange={e=>setEmail(e.target.value)} required />
+                <input className="input" placeholder="Password" type="password" value={password} onChange={e=>setPassword(e.target.value)} required minLength={6} />
+                {mode==='signup' && <input className="input" placeholder="Phone (optional)" value={phone} onChange={e=>setPhone(e.target.value)} />}
+                {error && <p style={{ color:'var(--red)', fontSize:13 }}>{error}</p>}
+                <button type="submit" disabled={loading} className="btn" style={{ width:'100%', padding:14, marginTop:6, background:loading?'var(--text-dim)':'var(--accent)', color:'#fff', fontSize:14 }}>
+                  {loading ? 'Processing...' : mode==='login' ? 'Sign In' : 'Create Account'}
+                </button>
+              </form>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ── RESUME ──
+    function ResumeUpload({ onComplete }) {
+      const [text, setText] = useState('');
+      const [loading, setLoading] = useState(false);
+      const [error, setError] = useState('');
+      const [result, setResult] = useState(null);
+
+      const submit = async (e) => {
+        e.preventDefault(); setError(''); setLoading(true);
+        try { const d = await api('/profile/resume', { method:'POST', body:{resume_text:text} }); setResult(d.profile); }
+        catch(e) { setError(e.message); }
+        setLoading(false);
+      };
+
+      if (result) return (
+        <div className="screen" style={{ background:'radial-gradient(ellipse at 50% 0%,var(--green-soft) 0%,var(--bg) 60%)' }}>
+          <div style={{ maxWidth:520, padding:20, width:'100%' }}>
+            <div className="fade-up" style={{ textAlign:'center', marginBottom:32 }}>
+              <div style={{ display:'inline-flex', alignItems:'center', justifyContent:'center', width:56, height:56, borderRadius:'50%', background:'var(--green-soft)', border:'2px solid #34d39940', marginBottom:16, fontSize:24, color:'var(--green)' }}>✓</div>
+              <h2 style={{ fontSize:22 }}>Profile Extracted</h2>
+              <p style={{ color:'var(--text-muted)', fontSize:14 }}>AI analyzed your resume</p>
+            </div>
+            <div className="card fade-up fade-d1">
+              {result.primary_roles?.length > 0 && <div style={{ marginBottom:18 }}><div className="label">Target Roles</div><div style={{ display:'flex', flexWrap:'wrap', gap:6 }}>{result.primary_roles.map(r => <Tag key={r}>{r}</Tag>)}</div></div>}
+              {(result.skills || result.core_skills)?.length > 0 && <div style={{ marginBottom:18 }}><div className="label">Skills</div><div style={{ display:'flex', flexWrap:'wrap', gap:6 }}>{(result.skills || result.core_skills).slice(0,12).map(s => <Tag key={s} color="#34d399">{s}</Tag>)}</div></div>}
+              <div style={{ display:'flex', gap:20, flexWrap:'wrap', fontSize:13 }}>
+                {result.seniority_level && <span><span style={{ color:'var(--text-dim)', fontSize:11 }}>Level: </span><strong>{result.seniority_level}</strong></span>}
+                {result.remote_preference && <span><span style={{ color:'var(--text-dim)', fontSize:11 }}>Remote: </span><strong>{result.remote_preference}</strong></span>}
+                {result.salary_expectation && <span><span style={{ color:'var(--text-dim)', fontSize:11 }}>Salary: </span><strong>{result.salary_expectation}</strong></span>}
+              </div>
+            </div>
+            <button onClick={onComplete} className="btn fade-up fade-d2" style={{ width:'100%', padding:14, marginTop:20, background:'var(--accent)', color:'#fff', fontSize:14 }}>Go to Dashboard →</button>
+          </div>
+        </div>
+      );
+
+      return (
+        <div className="screen" style={{ background:'radial-gradient(ellipse at 50% 0%,var(--accent-soft) 0%,var(--bg) 60%)' }}>
+          <div style={{ maxWidth:560, width:'100%', padding:20 }}>
+            <div style={{ textAlign:'center', marginBottom:32 }}>
+              <div style={{ fontSize:40, marginBottom:12, opacity:0.4 }}>📄</div>
+              <h2 style={{ fontSize:22 }}>Upload Your Resume</h2>
+              <p style={{ color:'var(--text-muted)', fontSize:14 }}>Paste your resume text. AI extracts your profile once.</p>
+            </div>
+            <form onSubmit={submit}>
+              <textarea value={text} onChange={e=>setText(e.target.value)} placeholder="Paste your resume text here..." style={{ width:'100%', minHeight:240, padding:18, background:'var(--surface)', border:'1px solid var(--border)', borderRadius:14, color:'var(--text)', fontSize:13, lineHeight:1.7, resize:'vertical', outline:'none', fontFamily:"'Source Serif 4',serif", boxSizing:'border-box' }} />
+              {error && <p style={{ color:'var(--red)', fontSize:13, marginTop:10 }}>{error}</p>}
+              <button type="submit" disabled={loading||text.length<50} className="btn" style={{ width:'100%', padding:14, marginTop:16, background:loading||text.length<50?'var(--text-dim)':'var(--accent)', color:'#fff', fontSize:14, display:'flex', alignItems:'center', justifyContent:'center', gap:8 }}>
+                {loading ? '⚙️ Analyzing...' : '⚡ Extract Profile with AI'}
+              </button>
+            </form>
+            <p style={{ textAlign:'center', color:'var(--text-dim)', fontSize:12, marginTop:10 }}>AI runs once to save costs.</p>
+          </div>
+        </div>
+      );
+    }
+
+    // ── DASHBOARD ──
+    function Dashboard({ onLogout }) {
+      const [tab, setTab] = useState('matches');
+      const [matches, setMatches] = useState([]);
+      const [stats, setStats] = useState({ total_matches:0, today_matches:0, notifications_sent:0, avg_score:0 });
+      const [profile, setProfile] = useState(null);
+      const [loading, setLoading] = useState(true);
+
+      useEffect(() => {
+        Promise.all([
+          api('/matches').catch(()=>({matches:[]})),
+          api('/matches/stats').catch(()=>({total_matches:0,today_matches:0,notifications_sent:0,avg_score:0})),
+          api('/profile').catch(()=>null),
+        ]).then(([m,s,p]) => { setMatches(m.matches||[]); setStats(s); setProfile(p); setLoading(false); });
+      }, []);
+
+      return (
+        <div style={{ minHeight:'100vh' }}>
+          <div className="grid-bg" />
+          <header style={{ position:'sticky', top:0, zIndex:100, borderBottom:'1px solid var(--border)', background:'rgba(10,10,18,0.85)', backdropFilter:'blur(16px)', padding:'0 28px', height:58, display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+            <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+              <div style={{ width:30, height:30, borderRadius:8, background:'linear-gradient(135deg,#a78bfa30,#34d39930)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:15 }}>🎯</div>
+              <span style={{ fontWeight:700, fontSize:16 }}>Job Agent</span>
+              <div style={{ width:6, height:6, borderRadius:'50%', background:'var(--green)', boxShadow:'0 0 8px #34d39960', animation:'pulse 2s ease-in-out infinite' }} />
+            </div>
+            <nav style={{ display:'flex', gap:2 }}>
+              {[{id:'matches',icon:'🎯',l:'Matches'},{id:'profile',icon:'👤',l:'Profile'},{id:'settings',icon:'⚙️',l:'Settings'}].map(n => (
+                <button key={n.id} onClick={()=>setTab(n.id)} className={'nav-btn'+(tab===n.id?' active':'')}><span style={{fontSize:13}}>{n.icon}</span> {n.l}</button>
+              ))}
+            </nav>
+            <button onClick={onLogout} style={{ padding:'8px 14px', background:'transparent', border:'1px solid var(--border)', borderRadius:8, color:'var(--text-muted)', fontSize:12, cursor:'pointer', fontFamily:'inherit' }}>Sign Out</button>
+          </header>
+
+          <main style={{ position:'relative', zIndex:1, maxWidth:920, margin:'0 auto', padding:'28px 20px 60px' }}>
+            {tab==='matches' && <>
+              <div style={{ display:'flex', gap:14, marginBottom:28, flexWrap:'wrap' }}>
+                {[{l:'Total Matches',v:stats.total_matches,c:'#a78bfa'},{l:'Today',v:stats.today_matches,c:'#fbbf24'},{l:'Alerts Sent',v:stats.notifications_sent,c:'#34d399'},{l:'Avg Score',v:stats.avg_score+'%',c:'#60a5fa'}].map((s,i) => (
+                  <div key={s.l} className={'stat-card fade-up fade-d'+i}>
+                    <div style={{ position:'absolute', top:-20, right:-20, width:80, height:80, borderRadius:'50%', background:s.c+'08' }} />
+                    <div className="label">{s.l}</div>
+                    <div style={{ fontSize:32, fontWeight:700, lineHeight:1 }}>{s.v}</div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'baseline', marginBottom:16 }}>
+                <h2 style={{ fontSize:18, fontWeight:600 }}>Recent Matches</h2>
+                <span style={{ fontSize:11, color:'var(--text-dim)', fontStyle:'italic', fontFamily:"'Source Serif 4',serif" }}>Updated 3x daily</span>
+              </div>
+              {loading ? <div style={{ textAlign:'center', padding:60, color:'var(--text-muted)' }}>Loading...</div>
+              : matches.length===0 ? <div className="card" style={{ textAlign:'center', padding:60 }}><div style={{fontSize:36,marginBottom:12}}>📭</div><h3>No matches yet</h3><p style={{color:'var(--text-muted)',fontSize:14,marginTop:6}}>Your agent is searching. Matches appear after the next scan.</p></div>
+              : <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+                  {matches.map((m,i) => {
+                    const j = m.jobs || m.job || {};
+                    return (
+                      <div key={m.id} className={'match-card fade-up fade-d'+Math.min(i,4)} onClick={()=>j.url&&window.open(j.url,'_blank')}>
+                        <div style={{ display:'flex', gap:16, alignItems:'flex-start' }}>
+                          <ScoreRing score={m.score} />
+                          <div style={{ flex:1 }}>
+                            <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
+                              <h3 style={{ margin:0, fontSize:16, fontWeight:600 }}>{j.title||'Untitled'}</h3>
+                              {m.sent && <Tag color="#34d399">Sent</Tag>}
+                            </div>
+                            <div style={{ fontSize:13, color:'var(--text-dim)', marginTop:3, fontFamily:"'Source Serif 4',serif" }}>{j.company}{j.company&&j.location?' · ':''}{j.location}</div>
+                            <div style={{ display:'flex', gap:6, marginTop:10, flexWrap:'wrap' }}>
+                              {j.salary && <Tag color="#34d399">{j.salary}</Tag>}
+                              {j.location?.toLowerCase().includes('remote') && <Tag color="#60a5fa" ghost>Remote</Tag>}
+                              <Tag color="#6b6b85" ghost>{timeAgo(m.created_at)}</Tag>
+                            </div>
+                            {m.ai_summary && <p style={{ margin:'14px 0 0', fontSize:13.5, color:'var(--text-muted)', lineHeight:1.65, fontFamily:"'Source Serif 4',serif", fontStyle:'italic' }}>{m.ai_summary}</p>}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              }
+            </>}
+
+            {tab==='profile' && profile && <div>
+              <h2 style={{ margin:'0 0 18px', fontSize:18, fontWeight:600 }}>Your Profile</h2>
+              <div className="card" style={{ borderRadius:18, position:'relative', overflow:'hidden' }}>
+                <div style={{ position:'absolute', top:0, left:0, right:0, height:3, background:'linear-gradient(90deg,#a78bfa,#34d399,#60a5fa)' }} />
+                <div style={{ display:'flex', alignItems:'center', gap:16, marginBottom:24 }}>
+                  <div style={{ width:50, height:50, borderRadius:14, display:'flex', alignItems:'center', justifyContent:'center', fontSize:20, fontWeight:700, background:'linear-gradient(135deg,#a78bfa20,#34d39920)', border:'1px solid #a78bfa25', color:'var(--accent)' }}>{(profile.email||'?')[0].toUpperCase()}</div>
+                  <div><div style={{ fontSize:18, fontWeight:700 }}>{profile.email}</div><div style={{ fontSize:13, color:'var(--text-dim)', marginTop:2 }}>{profile.seniority_level||''} · {profile.years_experience||0} yrs · {profile.remote_preference||''}</div></div>
+                </div>
+                {profile.primary_roles?.length>0 && <div style={{marginBottom:20}}><div className="label">Target Roles</div><div style={{display:'flex',flexWrap:'wrap',gap:6}}>{profile.primary_roles.map(r=><Tag key={r}>{r}</Tag>)}</div></div>}
+                {profile.skills?.length>0 && <div style={{marginBottom:20}}><div className="label">Skills</div><div style={{display:'flex',flexWrap:'wrap',gap:6}}>{profile.skills.map(s=><Tag key={s} color="#34d399">{s}</Tag>)}</div></div>}
+                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16 }}>
+                  {[{l:'Salary',v:profile.salary_expectation},{l:'Locations',v:(profile.preferred_locations||[]).join(', ')},{l:'Remote',v:profile.remote_preference},{l:'Notifications',v:profile.notification_method}].map(p=>(
+                    <div key={p.l}><div style={{fontSize:10,color:'var(--text-dim)',fontWeight:600,textTransform:'uppercase',letterSpacing:1,marginBottom:4}}>{p.l}</div><div style={{fontSize:13,fontFamily:"'Source Serif 4',serif"}}>{p.v||'—'}</div></div>
+                  ))}
+                </div>
+              </div>
+            </div>}
+
+            {tab==='settings' && <div>
+              <h2 style={{ margin:'0 0 18px', fontSize:18, fontWeight:600 }}>Settings</h2>
+              <div className="card" style={{ borderRadius:18, marginBottom:20 }}>
+                <div className="label">Notification Method</div>
+                <div style={{ display:'flex', gap:10 }}>
+                  {['email','sms','both'].map(m => (
+                    <button key={m} onClick={async()=>{ await api('/profile',{method:'PATCH',body:{notification_method:m}}); setProfile(p=>({...p,notification_method:m})); }} className="btn" style={{ padding:'12px 24px', borderRadius:10, fontSize:13, textTransform:'capitalize', background:profile?.notification_method===m?'var(--accent-soft)':'transparent', color:profile?.notification_method===m?'var(--accent)':'var(--text-dim)', border:'1px solid '+(profile?.notification_method===m?'var(--accent-glow)':'var(--border)') }}>{m}</button>
+                  ))}
+                </div>
+              </div>
+              <div className="card" style={{ borderRadius:18, marginBottom:20 }}>
+                <div className="label">Agent Schedule</div>
+                <div style={{ display:'flex', gap:12 }}>
+                  {['8:00 AM','1:00 PM','6:00 PM'].map((t,i) => (
+                    <div key={t} style={{ flex:1, textAlign:'center', padding:'16px 12px', background:'var(--bg)', borderRadius:12, border:'1px solid var(--border)' }}>
+                      <div style={{ fontSize:18, fontWeight:700 }}>{t}</div>
+                      <div style={{ fontSize:10, color:'var(--text-dim)', marginTop:4, textTransform:'uppercase', letterSpacing:1 }}>{['Morning','Midday','Evening'][i]}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="card" style={{ borderRadius:18 }}>
+                <div className="label">Cost Transparency</div>
+                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr 1fr', gap:12 }}>
+                  {[{l:'AI/day',v:'~3',c:'#a78bfa'},{l:'Monthly',v:'$0.10',c:'#34d399'},{l:'Jobs',v:'100+',c:'#60a5fa'},{l:'Matches',v:'Top 3',c:'#fbbf24'}].map(c=>(
+                    <div key={c.l} style={{ textAlign:'center', padding:'14px 8px', background:'var(--bg)', borderRadius:12, border:'1px solid var(--border)' }}>
+                      <div style={{ fontSize:20, fontWeight:700, color:c.c }}>{c.v}</div>
+                      <div style={{ fontSize:9, color:'var(--text-dim)', marginTop:4, textTransform:'uppercase', letterSpacing:1 }}>{c.l}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>}
+          </main>
+        </div>
+      );
+    }
+
+    // ── APP ──
+    function App() {
+      const [user, setUser] = useState(null);
+      const [needsResume, setNeedsResume] = useState(false);
+      const [checking, setChecking] = useState(true);
+
+      useEffect(() => {
+        const token = localStorage.getItem('ja_token');
+        if (!token) { setChecking(false); return; }
+        api('/profile').then(p => { setUser(p); if (!p.profile_complete) setNeedsResume(true); })
+          .catch(() => localStorage.removeItem('ja_token'))
+          .finally(() => setChecking(false));
+      }, []);
+
+      if (checking) return <div className="screen" style={{background:'var(--bg)',color:'var(--text-muted)'}}>Loading...</div>;
+      if (!user) return <AuthScreen onAuth={u => { setUser(u); setNeedsResume(true); }} />;
+      if (needsResume) return <ResumeUpload onComplete={() => setNeedsResume(false)} />;
+      return <Dashboard onLogout={() => { localStorage.removeItem('ja_token'); setUser(null); setNeedsResume(false); }} />;
+    }
+
+    ReactDOM.createRoot(document.getElementById('app')).render(<App />);
+  </script>
+</body>
+</html>

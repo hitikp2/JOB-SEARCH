@@ -2,6 +2,8 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import cron from 'node-cron';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import authRoutes from './routes/auth.js';
 import profileRoutes from './routes/profile.js';
 import jobRoutes from './routes/jobs.js';
@@ -10,59 +12,35 @@ import { runJobWorker } from './workers/jobWorker.js';
 
 dotenv.config();
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// ── CORS: allow multiple origins ──
-const allowedOrigins = [
-  process.env.FRONTEND_URL,
-  'http://localhost:3000',
-  'http://localhost:3001',
-].filter(Boolean);
-
+// ── CORS ──
 app.use(cors({
   origin: function (origin, callback) {
-    // Allow requests with no origin (mobile apps, Postman, server-to-server)
     if (!origin) return callback(null, true);
-    // Allow any Railway subdomain
     if (origin.endsWith('.up.railway.app')) return callback(null, true);
-    // Allow listed origins
-    if (allowedOrigins.includes(origin)) return callback(null, true);
-    callback(null, false);
+    if (origin.includes('localhost')) return callback(null, true);
+    callback(null, true); // Allow all since frontend is same server
   },
   credentials: true,
 }));
 
 app.use(express.json({ limit: '5mb' }));
 
-// Routes
+// ── API Routes ──
 app.use('/api/auth', authRoutes);
 app.use('/api/profile', profileRoutes);
 app.use('/api/jobs', jobRoutes);
 app.use('/api/matches', matchRoutes);
 
-// Health check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() });
 });
 
-// Root route
-app.get('/', (req, res) => {
-  res.json({
-    name: 'Job Agent API',
-    version: '1.0.0',
-    status: 'running',
-    endpoints: {
-      health: '/api/health',
-      auth: '/api/auth/signup, /api/auth/login',
-      profile: '/api/profile',
-      jobs: '/api/jobs',
-      matches: '/api/matches',
-    }
-  });
-});
-
-// Manual worker trigger
 app.post('/api/admin/run-worker', async (req, res) => {
   try {
     const result = await runJobWorker();
@@ -72,7 +50,18 @@ app.post('/api/admin/run-worker', async (req, res) => {
   }
 });
 
-// ── CRON SCHEDULE: 3x daily at 08:00, 13:00, 18:00 UTC ──
+// ── Serve Frontend (static files from public/) ──
+app.use(express.static(path.join(__dirname, 'public')));
+
+// Any non-API route serves the frontend
+app.get('*', (req, res) => {
+  if (req.path.startsWith('/api')) {
+    return res.status(404).json({ error: 'API endpoint not found' });
+  }
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// ── CRON ──
 cron.schedule('0 8,13,18 * * *', async () => {
   console.log(`[CRON] Starting job worker at ${new Date().toISOString()}`);
   try {
@@ -84,8 +73,8 @@ cron.schedule('0 8,13,18 * * *', async () => {
 });
 
 app.listen(PORT, () => {
-  console.log(`Job Agent API running on port ${PORT}`);
-  console.log(`Allowed origins: ${allowedOrigins.join(', ')}`);
+  console.log(`Job Agent running on port ${PORT}`);
+  console.log(`API: /api/*  |  Frontend: /*`);
   console.log(`Cron scheduled: 08:00, 13:00, 18:00 UTC`);
 });
 
