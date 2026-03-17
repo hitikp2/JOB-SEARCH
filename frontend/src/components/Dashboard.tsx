@@ -8,6 +8,7 @@ import { Tag } from "./Tag";
 import { StatCard } from "./StatCard";
 import { JobCard } from "./JobCard";
 import { InsightsModal } from "./InsightsModal";
+import { ResumeUpload } from "./ResumeUpload";
 import type { User, Profile, Match, MatchStats } from "@/lib/types";
 
 type TabId = "matches" | "profile" | "settings";
@@ -30,6 +31,7 @@ export function Dashboard({
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
   const [showInsights, setShowInsights] = useState(false);
+  const [showResumeUpload, setShowResumeUpload] = useState(false);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -447,6 +449,41 @@ export function Dashboard({
                 </div>
               </div>
             </div>
+
+            {/* Update Resume Button */}
+            <button
+              onClick={() => {
+                setShowResumeUpload(true);
+                trackActivity("open_resume_reupload");
+              }}
+              style={{
+                width: "100%",
+                padding: 14,
+                marginTop: 20,
+                border: `1px solid ${theme.border}`,
+                borderRadius: 12,
+                background: theme.surface,
+                color: theme.textMuted,
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 8,
+                transition: "all 0.2s",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.borderColor = theme.accent;
+                e.currentTarget.style.color = theme.accent;
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.borderColor = theme.border;
+                e.currentTarget.style.color = theme.textMuted;
+              }}
+            >
+              {Icons.upload} Update Resume
+            </button>
           </div>
         )}
 
@@ -661,6 +698,67 @@ export function Dashboard({
 
       {/* AI Insights Modal */}
       {showInsights && <InsightsModal onClose={() => setShowInsights(false)} />}
+
+      {/* Resume Re-Upload Modal */}
+      {showResumeUpload && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 1000,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background: "rgba(0,0,0,0.6)",
+            backdropFilter: "blur(8px)",
+          }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowResumeUpload(false);
+          }}
+        >
+          <div
+            className="animate-fade-in"
+            style={{
+              width: "100%",
+              maxWidth: 600,
+              maxHeight: "90vh",
+              margin: 20,
+              background: theme.bg,
+              border: `1px solid ${theme.border}`,
+              borderRadius: 20,
+              overflow: "auto",
+              position: "relative",
+            }}
+          >
+            {/* Close button */}
+            <button
+              onClick={() => setShowResumeUpload(false)}
+              style={{
+                position: "absolute",
+                top: 16,
+                right: 16,
+                background: `${theme.surface}cc`,
+                border: `1px solid ${theme.border}`,
+                borderRadius: 8,
+                color: theme.textMuted,
+                fontSize: 18,
+                cursor: "pointer",
+                padding: "4px 10px",
+                zIndex: 10,
+                lineHeight: 1,
+              }}
+            >
+              &times;
+            </button>
+            <ResumeUpload
+              onComplete={() => {
+                setShowResumeUpload(false);
+                loadData();
+              }}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
