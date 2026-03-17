@@ -4,8 +4,8 @@
  * Returns only matches scoring above threshold.
  */
 
-const SCORE_THRESHOLD = 70;
-const MAX_MATCHES_PER_USER = 3;
+const SCORE_THRESHOLD = 50;
+const MAX_MATCHES_PER_USER = 5;
 
 /**
  * Score a single job against a user profile

@@ -1,5 +1,5 @@
 import supabase from '../utils/supabase.js';
-import { fetchAllJobs, generateSampleJobs } from '../services/jobSearch.js';
+import { fetchAllJobs, fetchJobsForUser, generateSampleJobs } from '../services/jobSearch.js';
 import { matchJobsToUser } from '../services/matching.js';
 import { summarizeJobs } from '../services/ai.js';
 import { sendNotification } from '../services/notifications.js';
@@ -12,28 +12,27 @@ export async function runJobWorker() {
   const startTime = Date.now();
   console.log('[Worker] ──────────── Starting pipeline ────────────');
 
-  // ── Step 1: Fetch jobs ──
-  console.log('[Worker] Step 1: Fetching jobs...');
-  let jobs;
-  try {
-    jobs = USE_SAMPLE_JOBS ? generateSampleJobs() : await fetchAllJobs();
-  } catch (err) {
-    console.error('[Worker] Failed to fetch jobs:', err.message);
-    jobs = generateSampleJobs(); // Fallback to sample
-  }
-  console.log(`[Worker] Fetched ${jobs.length} jobs`);
+  // ── Step 1: Get all users with complete profiles ──
+  console.log('[Worker] Step 1: Getting users with complete profiles...');
+  const { data: users, error: usersErr } = await supabase
+    .from('users')
+    .select('*')
+    .eq('profile_complete', true);
 
-  if (jobs.length === 0) {
-    console.log('[Worker] No jobs found. Exiting.');
+  if (usersErr) {
+    console.error('[Worker] Failed to fetch users:', usersErr.message);
     return { jobs: 0, users: 0, notifications: 0 };
   }
 
-  // ── Step 2: Store jobs (filter out null URLs) ──
-  console.log('[Worker] Step 2: Storing jobs...');
-  let storedCount = 0;
-  const validJobs = jobs.filter(j => j.url && j.url.length > 0);
+  if (!users || users.length === 0) {
+    console.log('[Worker] No users with complete profiles. Exiting.');
+    return { jobs: 0, users: 0, notifications: 0 };
+  }
+  console.log(`[Worker] Processing ${users.length} users`);
 
-  for (const job of validJobs) {
+  // ── Step 2: Fetch + store jobs per user (personalized searches) ──
+  let totalStoredCount = 0;
+  const storeJob = async (job) => {
     try {
       const { error } = await supabase.from('jobs').upsert(
         {
@@ -48,54 +47,56 @@ export async function runJobWorker() {
         },
         { onConflict: 'url', ignoreDuplicates: true }
       );
-      if (!error) storedCount++;
-      else console.error(`[Worker] Store error for ${job.url}:`, error.message);
+      if (!error) totalStoredCount++;
     } catch (err) {
       console.error(`[Worker] Store exception:`, err.message);
     }
-  }
-  console.log(`[Worker] Stored ${storedCount} new jobs`);
+  };
 
-  // ── Step 3: Get all users with complete profiles ──
-  const { data: users, error: usersErr } = await supabase
-    .from('users')
-    .select('*')
-    .eq('profile_complete', true);
-
-  if (usersErr) {
-    console.error('[Worker] Failed to fetch users:', usersErr.message);
-    return { jobs: storedCount, users: 0, notifications: 0 };
-  }
-
-  if (!users || users.length === 0) {
-    console.log('[Worker] No users with complete profiles. Exiting.');
-    return { jobs: storedCount, users: 0, notifications: 0 };
-  }
-  console.log(`[Worker] Processing ${users.length} users`);
-
-  // ── Step 4: Fetch recent jobs from DB for matching ──
-  const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-  const { data: recentJobs, error: jobsErr } = await supabase
-    .from('jobs')
-    .select('*')
-    .gte('created_at', oneDayAgo)
-    .order('created_at', { ascending: false })
-    .limit(200);
-
-  if (jobsErr) {
-    console.error('[Worker] Failed to fetch recent jobs:', jobsErr.message);
-    return { jobs: storedCount, users: users.length, notifications: 0 };
-  }
-
-  const jobPool = recentJobs || [];
-  console.log(`[Worker] ${jobPool.length} recent jobs in pool`);
-
-  // ── Step 5: Match & Notify each user ──
+  // ── Step 3: Match & Notify each user with personalized job pool ──
   let notificationCount = 0;
 
   for (const user of users) {
     try {
-      console.log(`[Worker] Matching for user: ${user.email}`);
+      console.log(`[Worker] ── Processing user: ${user.email} ──`);
+
+      // Fetch jobs tailored to this user's profile
+      console.log(`[Worker]   → Fetching personalized jobs...`);
+      let userJobs;
+      try {
+        userJobs = USE_SAMPLE_JOBS ? generateSampleJobs() : await fetchJobsForUser(user);
+      } catch (err) {
+        console.error(`[Worker]   → Failed to fetch user jobs:`, err.message);
+        userJobs = generateSampleJobs();
+      }
+
+      // Store the fetched jobs
+      const validJobs = userJobs.filter(j => j.url && j.url.length > 0);
+      for (const job of validJobs) {
+        await storeJob(job);
+      }
+
+      // Also include recent jobs already in DB for broader matching
+      const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const { data: recentDbJobs } = await supabase
+        .from('jobs')
+        .select('*')
+        .gte('created_at', oneDayAgo)
+        .order('created_at', { ascending: false })
+        .limit(200);
+
+      // Merge: freshly fetched + existing DB jobs, deduplicated by URL
+      const seenUrls = new Set();
+      const jobPool = [];
+      for (const job of [...userJobs, ...(recentDbJobs || [])]) {
+        const url = job.url;
+        if (url && !seenUrls.has(url)) {
+          seenUrls.add(url);
+          jobPool.push(job);
+        }
+      }
+
+      console.log(`[Worker]   → ${jobPool.length} jobs in personalized pool`);
 
       const matches = matchJobsToUser(user, jobPool);
       console.log(`[Worker]   → ${matches.length} matches (score ≥ 70)`);
@@ -181,10 +182,10 @@ export async function runJobWorker() {
 
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
   console.log(`[Worker] ──────────── Complete ────────────`);
-  console.log(`[Worker] Jobs: ${storedCount} | Users: ${users.length} | Sent: ${notificationCount} | Time: ${elapsed}s`);
+  console.log(`[Worker] Jobs: ${totalStoredCount} | Users: ${users.length} | Sent: ${notificationCount} | Time: ${elapsed}s`);
 
   return {
-    jobs: storedCount,
+    jobs: totalStoredCount,
     users: users.length,
     notifications: notificationCount,
     elapsed: `${elapsed}s`

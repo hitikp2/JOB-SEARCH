@@ -79,15 +79,60 @@ function formatSalary(raw) {
 }
 
 /**
+ * Build search queries from a user's profile
+ * Combines roles with location/remote preference for targeted searches
+ */
+export function buildUserSearchQueries(user) {
+  const roles = (user.primary_roles || []).slice(0, 5);
+  if (roles.length === 0) return SEARCH_CLUSTERS; // Fallback to defaults
+
+  const queries = [];
+  const remotePref = user.remote_preference || 'remote';
+  const locations = (user.preferred_locations || []).slice(0, 3);
+
+  for (const role of roles) {
+    if (remotePref === 'remote' || remotePref === 'flexible' || locations.length === 0) {
+      queries.push(`${role} remote`);
+    }
+    if (remotePref !== 'remote' && locations.length > 0) {
+      // Add location-specific queries for non-remote users
+      for (const loc of locations) {
+        queries.push(`${role} ${loc}`);
+      }
+    }
+  }
+
+  // Deduplicate queries
+  return [...new Set(queries)].slice(0, 10);
+}
+
+/**
  * Fetch all jobs across all search clusters
  * Deduplicates by URL
  */
 export async function fetchAllJobs() {
-  console.log(`[JobSearch] Fetching from ${SEARCH_CLUSTERS.length} clusters...`);
+  console.log(`[JobSearch] Fetching from ${SEARCH_CLUSTERS.length} default clusters...`);
+  return fetchJobsByQueries(SEARCH_CLUSTERS);
+}
+
+/**
+ * Fetch jobs for a specific user based on their profile
+ */
+export async function fetchJobsForUser(user) {
+  const queries = buildUserSearchQueries(user);
+  console.log(`[JobSearch] Fetching for user ${user.email}: ${queries.length} queries → ${queries.join(' | ')}`);
+  return fetchJobsByQueries(queries);
+}
+
+/**
+ * Fetch jobs using a list of search queries
+ * Deduplicates by URL
+ */
+async function fetchJobsByQueries(queries) {
   const allJobs = [];
   const seenUrls = new Set();
 
-  for (const query of SEARCH_CLUSTERS) {
+  for (const query of queries) {
     const jobs = await searchJobs(query);
     for (const job of jobs) {
       if (job.url && !seenUrls.has(job.url)) {
