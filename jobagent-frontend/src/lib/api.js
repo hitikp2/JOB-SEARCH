@@ -24,6 +24,29 @@ export async function api(path, opts = {}) {
   return res.json();
 }
 
+// Upload file via multipart/form-data (no JSON Content-Type)
+export async function apiUpload(path, formData) {
+  let token = null;
+  if (typeof window !== 'undefined') {
+    token = localStorage.getItem('ja_token');
+  }
+
+  const res = await fetch(`${API_URL}${path}`, {
+    method: 'POST',
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `Upload failed: ${res.status}`);
+  }
+
+  return res.json();
+}
+
 export function getToken() {
   if (typeof window !== 'undefined') {
     return localStorage.getItem('ja_token');

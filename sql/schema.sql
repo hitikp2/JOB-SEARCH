@@ -118,3 +118,42 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER users_updated_at
   BEFORE UPDATE ON users
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+-- ============================================
+-- USER EXPERIENCE / FEEDBACK TABLE
+-- ============================================
+CREATE TABLE user_experience (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  match_id UUID REFERENCES matches(id) ON DELETE SET NULL,
+  action TEXT NOT NULL, -- 'view' | 'apply_click' | 'dismiss' | 'feedback' | 'test_run'
+  rating INTEGER, -- 1-5 star rating (optional)
+  feedback_text TEXT,
+  metadata JSONB DEFAULT '{}',
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_user_experience_user ON user_experience(user_id, created_at DESC);
+CREATE INDEX idx_user_experience_action ON user_experience(action);
+
+ALTER TABLE user_experience ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Users read own experience" ON user_experience
+  FOR SELECT USING (auth.uid() = user_id);
+CREATE POLICY "Users insert own experience" ON user_experience
+  FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+-- ============================================
+-- AI INSIGHTS CACHE TABLE
+-- ============================================
+CREATE TABLE ai_insights (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  insights JSONB NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_ai_insights_user ON ai_insights(user_id, created_at DESC);
+
+ALTER TABLE ai_insights ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Users read own insights" ON ai_insights
+  FOR SELECT USING (auth.uid() = user_id);

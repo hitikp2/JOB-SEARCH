@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect, useCallback } from 'react';
-import { api, setToken, clearToken, getToken } from '../lib/api';
+import { api, apiUpload, setToken, clearToken, getToken } from '../lib/api';
 
 // ─── SCORE RING ───
 function ScoreRing({ score, size = 44 }) {
@@ -141,18 +141,49 @@ function AuthScreen({ onAuth }) {
 }
 
 // ─── RESUME UPLOAD ───
-function ResumeUpload({ onComplete }) {
+function ResumeUpload({ onComplete, embedded = false }) {
+  const [mode, setMode] = useState('file'); // 'file' or 'text'
   const [text, setText] = useState('');
+  const [file, setFile] = useState(null);
+  const [dragOver, setDragOver] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState(null);
+
+  const acceptedTypes = '.pdf,.txt,.jpg,.jpeg,.png,.doc,.docx';
+  const acceptedMimes = [
+    'application/pdf', 'text/plain', 'image/jpeg', 'image/png', 'image/jpg',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/msword'
+  ];
+
+  const handleFileDrop = (e) => {
+    e.preventDefault();
+    setDragOver(false);
+    const f = e.dataTransfer?.files?.[0] || e.target?.files?.[0];
+    if (f) {
+      if (!acceptedMimes.includes(f.type) && !f.name.match(/\.(pdf|txt|jpe?g|png|docx?)$/i)) {
+        setError('Unsupported file. Use PDF, TXT, JPG, PNG, DOC, or DOCX.');
+        return;
+      }
+      setFile(f);
+      setError('');
+    }
+  };
 
   const handleExtract = async (e) => {
     e.preventDefault();
     setError('');
     setLoading(true);
     try {
-      const data = await api('/profile/resume', { method: 'POST', body: { resume_text: text } });
+      let data;
+      if (mode === 'file' && file) {
+        const formData = new FormData();
+        formData.append('resume', file);
+        data = await apiUpload('/profile/resume/upload', formData);
+      } else {
+        data = await api('/profile/resume', { method: 'POST', body: { resume_text: text } });
+      }
       setResult(data.profile);
     } catch (err) {
       setError(err.message);
@@ -160,20 +191,22 @@ function ResumeUpload({ onComplete }) {
     setLoading(false);
   };
 
+  const canSubmit = mode === 'file' ? !!file : text.length >= 50;
+
   if (result) {
     return (
       <div style={{
-        minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
-        background: 'radial-gradient(ellipse at 50% 0%, var(--green-soft) 0%, var(--bg) 60%)',
+        ...(embedded ? {} : { minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: 'radial-gradient(ellipse at 50% 0%, var(--green-soft) 0%, var(--bg) 60%)' }),
       }}>
-        <div style={{ maxWidth: 520, padding: '20px', width: '100%' }}>
+        <div style={{ maxWidth: 520, padding: '20px', width: '100%', ...(embedded ? { margin: '0 auto' } : {}) }}>
           <div style={{ textAlign: 'center', marginBottom: 32 }} className="fade-up">
             <div style={{
               display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
               width: 56, height: 56, borderRadius: '50%', background: 'var(--green-soft)',
               border: '2px solid #34d39940', marginBottom: 16, fontSize: 24,
             }}>✓</div>
-            <h2 style={{ margin: '0 0 6px', fontSize: 22 }}>Profile Extracted</h2>
+            <h2 style={{ margin: '0 0 6px', fontSize: 22 }}>Profile {embedded ? 'Updated' : 'Extracted'}</h2>
             <p style={{ color: 'var(--text-muted)', fontSize: 14 }}>AI analyzed your resume and built your job profile</p>
           </div>
 
@@ -208,47 +241,103 @@ function ResumeUpload({ onComplete }) {
             width: '100%', padding: 14, marginTop: 20, border: 'none', borderRadius: 10,
             background: 'var(--accent)', color: '#fff', fontSize: 14, fontWeight: 600,
             cursor: 'pointer', fontFamily: 'inherit', animationDelay: '0.2s',
-          }}>Go to Dashboard →</button>
+          }}>{embedded ? 'Done' : 'Go to Dashboard →'}</button>
         </div>
       </div>
     );
   }
 
+  const uploadArea = (
+    <div
+      onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+      onDragLeave={() => setDragOver(false)}
+      onDrop={handleFileDrop}
+      onClick={() => document.getElementById('resume-file-input')?.click()}
+      style={{
+        width: '100%', minHeight: 180, padding: 28, background: dragOver ? 'var(--accent-soft)' : 'var(--surface)',
+        border: `2px dashed ${dragOver ? 'var(--accent)' : file ? '#34d399' : 'var(--border)'}`,
+        borderRadius: 14, cursor: 'pointer', textAlign: 'center',
+        transition: 'all 0.2s', boxSizing: 'border-box',
+        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10,
+      }}
+    >
+      <input id="resume-file-input" type="file" accept={acceptedTypes}
+        onChange={handleFileDrop} style={{ display: 'none' }} />
+      {file ? (
+        <>
+          <div style={{ fontSize: 32 }}>✅</div>
+          <div style={{ fontSize: 14, fontWeight: 600, color: '#34d399' }}>{file.name}</div>
+          <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>
+            {(file.size / 1024).toFixed(1)} KB · Click or drag to replace
+          </div>
+        </>
+      ) : (
+        <>
+          <div style={{ fontSize: 32, opacity: 0.5 }}>📎</div>
+          <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-muted)' }}>
+            Drag & drop your resume here
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>
+            or click to browse · PDF, JPG, PNG, DOC, DOCX, TXT
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 4 }}>Max 5MB</div>
+        </>
+      )}
+    </div>
+  );
+
   return (
     <div style={{
-      minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
-      background: 'radial-gradient(ellipse at 50% 0%, var(--accent-soft) 0%, var(--bg) 60%)',
+      ...(embedded ? {} : { minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: 'radial-gradient(ellipse at 50% 0%, var(--accent-soft) 0%, var(--bg) 60%)' }),
     }}>
-      <div style={{ maxWidth: 560, width: '100%', padding: '20px' }}>
+      <div style={{ maxWidth: 560, width: '100%', padding: '20px', ...(embedded ? { margin: '0 auto' } : {}) }}>
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
           <div style={{ fontSize: 40, marginBottom: 12, opacity: 0.4 }}>📄</div>
-          <h2 style={{ margin: '0 0 6px', fontSize: 22 }}>Upload Your Resume</h2>
-          <p style={{ color: 'var(--text-muted)', fontSize: 14 }}>Paste your resume text below. AI will extract your profile once.</p>
+          <h2 style={{ margin: '0 0 6px', fontSize: 22 }}>{embedded ? 'Re-upload Resume' : 'Upload Your Resume'}</h2>
+          <p style={{ color: 'var(--text-muted)', fontSize: 14 }}>Upload a file or paste text. AI will extract your profile.</p>
+        </div>
+
+        {/* Mode toggle */}
+        <div style={{ display: 'flex', gap: 4, background: 'var(--bg)', borderRadius: 10, padding: 4, marginBottom: 20 }}>
+          {[{ id: 'file', label: 'Upload File' }, { id: 'text', label: 'Paste Text' }].map(m => (
+            <button key={m.id} onClick={() => { setMode(m.id); setError(''); }}
+              style={{
+                flex: 1, padding: '10px 0', border: 'none', borderRadius: 8, cursor: 'pointer',
+                fontSize: 13, fontWeight: 600, fontFamily: 'inherit', transition: 'all 0.2s',
+                background: mode === m.id ? 'var(--accent)' : 'transparent',
+                color: mode === m.id ? '#fff' : 'var(--text-muted)',
+              }}>
+              {m.label}
+            </button>
+          ))}
         </div>
 
         <form onSubmit={handleExtract}>
-          <textarea value={text} onChange={e => setText(e.target.value)}
-            placeholder="Paste your resume text here..."
-            style={{
-              width: '100%', minHeight: 240, padding: 18, background: 'var(--surface)',
-              border: '1px solid var(--border)', borderRadius: 14, color: 'var(--text)',
-              fontSize: 13, lineHeight: 1.7, resize: 'vertical', outline: 'none',
-              fontFamily: "'Source Serif 4', serif", boxSizing: 'border-box',
-            }}
-          />
+          {mode === 'file' ? uploadArea : (
+            <textarea value={text} onChange={e => setText(e.target.value)}
+              placeholder="Paste your resume text here..."
+              style={{
+                width: '100%', minHeight: 240, padding: 18, background: 'var(--surface)',
+                border: '1px solid var(--border)', borderRadius: 14, color: 'var(--text)',
+                fontSize: 13, lineHeight: 1.7, resize: 'vertical', outline: 'none',
+                fontFamily: "'Source Serif 4', serif", boxSizing: 'border-box',
+              }}
+            />
+          )}
           {error && <p style={{ color: 'var(--red)', fontSize: 13, marginTop: 10 }}>{error}</p>}
-          <button type="submit" disabled={loading || text.length < 50} style={{
+          <button type="submit" disabled={loading || !canSubmit} style={{
             width: '100%', padding: 14, marginTop: 16, border: 'none', borderRadius: 10,
-            background: loading || text.length < 50 ? 'var(--text-dim)' : 'var(--accent)',
+            background: loading || !canSubmit ? 'var(--text-dim)' : 'var(--accent)',
             color: '#fff', fontSize: 14, fontWeight: 600, fontFamily: 'inherit',
-            cursor: loading || text.length < 50 ? 'not-allowed' : 'pointer',
+            cursor: loading || !canSubmit ? 'not-allowed' : 'pointer',
             display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
           }}>
-            {loading ? '⚙️ Analyzing resume...' : '⚡ Extract Profile with AI'}
+            {loading ? 'Analyzing resume...' : 'Extract Profile with AI'}
           </button>
         </form>
         <p style={{ textAlign: 'center', color: 'var(--text-dim)', fontSize: 12, marginTop: 10 }}>
-          AI runs once to save costs. You can edit your profile later.
+          Supports PDF, JPG, PNG, DOC, DOCX, and plain text. You can re-upload anytime.
         </p>
       </div>
     </div>
@@ -256,14 +345,14 @@ function ResumeUpload({ onComplete }) {
 }
 
 // ─── MATCH CARD ───
-function MatchCard({ match }) {
+function MatchCard({ match, onApplyClick }) {
   const [hovered, setHovered] = useState(false);
   const { job, score, ai_summary, created_at, sent } = match;
   const j = job || match.jobs || {};
 
   return (
     <div onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}
-      onClick={() => j.url && window.open(j.url, '_blank')}
+      onClick={() => { if (j.url) { window.open(j.url, '_blank'); onApplyClick?.(); } }}
       style={{
         background: hovered ? 'var(--card-hover)' : 'var(--surface)',
         border: `1px solid ${hovered ? 'var(--border-focus)' : 'var(--border)'}`,
@@ -325,6 +414,179 @@ function Stat({ label, value, sub, color = '#a78bfa' }) {
   );
 }
 
+// ─── AI INSIGHTS MODAL ───
+function InsightsModal({ onClose }) {
+  const [insights, setInsights] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const data = await api('/experience/insights');
+        setInsights(data.insights);
+      } catch (err) {
+        setError(err.message);
+      }
+      setLoading(false);
+    })();
+  }, []);
+
+  const qualityColors = { low: '#ef4444', medium: '#fbbf24', high: '#34d399' };
+
+  return (
+    <div onClick={onClose} style={{
+      position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.6)',
+      backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+      padding: 20,
+    }}>
+      <div onClick={e => e.stopPropagation()} style={{
+        width: '100%', maxWidth: 580, maxHeight: '85vh', overflowY: 'auto',
+        background: 'var(--surface)', border: '1px solid var(--border)',
+        borderRadius: 20, padding: 0, boxShadow: '0 24px 80px rgba(0,0,0,0.5)',
+      }}>
+        {/* Modal header */}
+        <div style={{
+          padding: '24px 28px 18px', borderBottom: '1px solid var(--border)',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{
+              width: 36, height: 36, borderRadius: 10,
+              background: 'linear-gradient(135deg, #a78bfa20, #fbbf2420)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18,
+            }}>💡</div>
+            <div>
+              <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>AI Insights</h2>
+              <p style={{ margin: 0, fontSize: 11, color: 'var(--text-dim)' }}>Personalized suggestions for your job search</p>
+            </div>
+          </div>
+          <button onClick={onClose} style={{
+            background: 'none', border: 'none', color: 'var(--text-dim)', fontSize: 20,
+            cursor: 'pointer', padding: 4, lineHeight: 1,
+          }}>×</button>
+        </div>
+
+        <div style={{ padding: '24px 28px 28px' }}>
+          {loading ? (
+            <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-muted)' }}>
+              <div style={{ fontSize: 28, marginBottom: 12, animation: 'pulse 1.5s ease-in-out infinite' }}>🧠</div>
+              Analyzing your profile & matches...
+            </div>
+          ) : error ? (
+            <div style={{ textAlign: 'center', padding: 40, color: 'var(--red)' }}>
+              <div style={{ fontSize: 28, marginBottom: 12 }}>⚠️</div>
+              {error}
+            </div>
+          ) : insights ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+              {/* Summary */}
+              <div style={{
+                padding: 18, background: 'var(--bg)', borderRadius: 14,
+                border: '1px solid var(--border)',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: 1.5 }}>Summary</span>
+                  <Tag color={qualityColors[insights.match_quality] || '#6b7280'}>
+                    {insights.match_quality} quality
+                  </Tag>
+                </div>
+                <p style={{ margin: 0, fontSize: 14, lineHeight: 1.6, fontFamily: "'Source Serif 4', serif", color: 'var(--text-muted)' }}>
+                  {insights.summary}
+                </p>
+              </div>
+
+              {/* Strengths */}
+              {insights.strengths?.length > 0 && (
+                <div>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: '#34d399', textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 10 }}>Strengths</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {insights.strengths.map((s, i) => (
+                      <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--text-muted)' }}>
+                        <span style={{ color: '#34d399', flexShrink: 0 }}>+</span> {s}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Improvements */}
+              {insights.improvements?.length > 0 && (
+                <div>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: '#fbbf24', textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 10 }}>Suggestions</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {insights.improvements.map((s, i) => (
+                      <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--text-muted)' }}>
+                        <span style={{ color: '#fbbf24', flexShrink: 0 }}>→</span> {s}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Skill gaps */}
+              {insights.skill_gaps?.length > 0 && (
+                <div>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: '#ef4444', textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 10 }}>Skill Gaps</div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    {insights.skill_gaps.map((s, i) => <Tag key={i} color="#ef4444">{s}</Tag>)}
+                  </div>
+                </div>
+              )}
+
+              {/* Market trends */}
+              {insights.market_trends && (
+                <div style={{
+                  padding: 16, background: 'linear-gradient(135deg, #a78bfa08, #60a5fa08)',
+                  borderRadius: 12, border: '1px solid #a78bfa15',
+                }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: '#60a5fa', textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 8 }}>Market Trends</div>
+                  <p style={{ margin: 0, fontSize: 13, lineHeight: 1.6, color: 'var(--text-muted)', fontFamily: "'Source Serif 4', serif" }}>
+                    {insights.market_trends}
+                  </p>
+                </div>
+              )}
+
+              {/* Next steps */}
+              {insights.next_steps?.length > 0 && (
+                <div>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: '#a78bfa', textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 10 }}>Next Steps</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {insights.next_steps.map((s, i) => (
+                      <div key={i} style={{
+                        display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px',
+                        background: 'var(--bg)', borderRadius: 10, border: '1px solid var(--border)',
+                        fontSize: 13, color: 'var(--text-muted)',
+                      }}>
+                        <span style={{
+                          width: 22, height: 22, borderRadius: 6, flexShrink: 0,
+                          background: 'var(--accent-soft)', color: 'var(--accent)',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          fontSize: 11, fontWeight: 700,
+                        }}>{i + 1}</span>
+                        {s}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Confidence */}
+              {insights.confidence_score && (
+                <div style={{ textAlign: 'center', paddingTop: 8 }}>
+                  <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>
+                    Confidence: {insights.confidence_score}%
+                  </span>
+                </div>
+              )}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── DASHBOARD ───
 function Dashboard({ user, onLogout }) {
   const [tab, setTab] = useState('matches');
@@ -332,6 +594,10 @@ function Dashboard({ user, onLogout }) {
   const [stats, setStats] = useState({ total_matches: 0, today_matches: 0, notifications_sent: 0, avg_score: 0 });
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [testRunning, setTestRunning] = useState(false);
+  const [testResult, setTestResult] = useState(null);
+  const [showInsights, setShowInsights] = useState(false);
+  const [showReupload, setShowReupload] = useState(false);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -352,6 +618,34 @@ function Dashboard({ user, onLogout }) {
 
   useEffect(() => { loadData(); }, [loadData]);
 
+  // Track match views for experience data
+  const trackAction = useCallback(async (action, matchId = null, extra = {}) => {
+    try {
+      await api('/experience', {
+        method: 'POST',
+        body: { action, match_id: matchId, ...extra }
+      });
+    } catch (err) {
+      // Silently fail - don't block UX
+    }
+  }, []);
+
+  // Test matching button handler
+  const handleTestRun = async () => {
+    setTestRunning(true);
+    setTestResult(null);
+    try {
+      await trackAction('test_run');
+      const result = await api('/admin/run-worker', { method: 'POST' });
+      setTestResult({ success: true, message: result.message || 'Worker completed successfully!' });
+      // Reload data after test
+      await loadData();
+    } catch (err) {
+      setTestResult({ success: false, message: err.message });
+    }
+    setTestRunning(false);
+  };
+
   const navItems = [
     { id: 'matches', label: 'Matches', icon: '🎯' },
     { id: 'profile', label: 'Profile', icon: '👤' },
@@ -366,6 +660,9 @@ function Dashboard({ user, onLogout }) {
         backgroundImage: 'linear-gradient(#a78bfa 1px, transparent 1px), linear-gradient(90deg, #a78bfa 1px, transparent 1px)',
         backgroundSize: '60px 60px',
       }} />
+
+      {/* AI Insights Modal */}
+      {showInsights && <InsightsModal onClose={() => setShowInsights(false)} />}
 
       {/* Header */}
       <header style={{
@@ -401,11 +698,20 @@ function Dashboard({ user, onLogout }) {
             </button>
           ))}
         </nav>
-        <button onClick={onLogout} style={{
-          display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px',
-          background: 'transparent', border: '1px solid var(--border)', borderRadius: 8,
-          color: 'var(--text-muted)', fontSize: 12, cursor: 'pointer', fontFamily: 'inherit',
-        }}>Sign Out</button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          {/* AI Insights button */}
+          <button onClick={() => setShowInsights(true)} style={{
+            display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px',
+            background: 'linear-gradient(135deg, #a78bfa15, #fbbf2415)',
+            border: '1px solid #a78bfa30', borderRadius: 8,
+            color: '#fbbf24', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+          }}>💡 AI Insights</button>
+          <button onClick={onLogout} style={{
+            display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px',
+            background: 'transparent', border: '1px solid var(--border)', borderRadius: 8,
+            color: 'var(--text-muted)', fontSize: 12, cursor: 'pointer', fontFamily: 'inherit',
+          }}>Sign Out</button>
+        </div>
       </header>
 
       <main style={{ position: 'relative', zIndex: 1, maxWidth: 920, margin: '0 auto', padding: '28px 20px 60px' }}>
@@ -419,12 +725,40 @@ function Dashboard({ user, onLogout }) {
               <Stat label="Avg Score" value={`${stats.avg_score}%`} color="#60a5fa" />
             </div>
 
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
               <h2 style={{ margin: 0, fontSize: 18, fontWeight: 600 }}>Recent Matches</h2>
-              <span style={{ fontSize: 11, color: 'var(--text-dim)', fontStyle: 'italic', fontFamily: "'Source Serif 4', serif" }}>
-                Updated 3x daily
-              </span>
+              <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                {/* Test Matching Button */}
+                <button onClick={handleTestRun} disabled={testRunning} style={{
+                  display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px',
+                  background: testRunning ? 'var(--text-dim)' : 'linear-gradient(135deg, #34d39920, #34d39910)',
+                  border: '1px solid #34d39940', borderRadius: 8,
+                  color: testRunning ? 'var(--text-dim)' : '#34d399', fontSize: 12, fontWeight: 600,
+                  cursor: testRunning ? 'wait' : 'pointer', fontFamily: 'inherit', transition: 'all 0.2s',
+                }}>
+                  {testRunning ? '⏳ Running...' : '🧪 Test Matching'}
+                </button>
+                <span style={{ fontSize: 11, color: 'var(--text-dim)', fontStyle: 'italic', fontFamily: "'Source Serif 4', serif" }}>
+                  Updated 3x daily
+                </span>
+              </div>
             </div>
+
+            {/* Test Result Banner */}
+            {testResult && (
+              <div style={{
+                padding: '12px 18px', marginBottom: 16, borderRadius: 12,
+                background: testResult.success ? '#34d39910' : '#ef444410',
+                border: `1px solid ${testResult.success ? '#34d39930' : '#ef444430'}`,
+                color: testResult.success ? '#34d399' : '#ef4444',
+                fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              }}>
+                <span>{testResult.success ? '✓' : '✗'} {testResult.message}</span>
+                <button onClick={() => setTestResult(null)} style={{
+                  background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', fontSize: 16,
+                }}>×</button>
+              </div>
+            )}
 
             {loading ? (
               <div style={{ textAlign: 'center', padding: 60, color: 'var(--text-muted)' }}>Loading matches...</div>
@@ -435,13 +769,24 @@ function Dashboard({ user, onLogout }) {
               }}>
                 <div style={{ fontSize: 36, marginBottom: 12 }}>📭</div>
                 <h3 style={{ margin: '0 0 6px' }}>No matches yet</h3>
-                <p style={{ color: 'var(--text-muted)', fontSize: 14 }}>
+                <p style={{ color: 'var(--text-muted)', fontSize: 14, marginBottom: 16 }}>
                   Your agent is searching. Matches appear after the next scan at 8:00 AM, 1:00 PM, or 6:00 PM UTC.
                 </p>
+                <button onClick={handleTestRun} disabled={testRunning} style={{
+                  padding: '10px 24px', borderRadius: 10, border: '1px solid #34d39940',
+                  background: '#34d39915', color: '#34d399', fontSize: 13, fontWeight: 600,
+                  cursor: testRunning ? 'wait' : 'pointer', fontFamily: 'inherit',
+                }}>
+                  {testRunning ? 'Running...' : '🧪 Run Test Scan Now'}
+                </button>
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {matches.map(m => <MatchCard key={m.id} match={m} />)}
+                {matches.map(m => (
+                  <div key={m.id} onClick={() => trackAction('view', m.id)}>
+                    <MatchCard match={m} onApplyClick={() => trackAction('apply_click', m.id)} />
+                  </div>
+                ))}
               </div>
             )}
           </>
@@ -450,7 +795,29 @@ function Dashboard({ user, onLogout }) {
         {/* PROFILE TAB */}
         {tab === 'profile' && profile && (
           <div>
-            <h2 style={{ margin: '0 0 18px', fontSize: 18, fontWeight: 600 }}>Your Profile</h2>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
+              <h2 style={{ margin: 0, fontSize: 18, fontWeight: 600 }}>Your Profile</h2>
+              <button onClick={() => setShowReupload(!showReupload)} style={{
+                display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px',
+                background: showReupload ? 'var(--accent-soft)' : 'transparent',
+                border: `1px solid ${showReupload ? 'var(--accent-glow)' : 'var(--border)'}`,
+                borderRadius: 8, color: showReupload ? 'var(--accent)' : 'var(--text-muted)',
+                fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+              }}>
+                📄 {showReupload ? 'Hide Upload' : 'Re-upload Resume'}
+              </button>
+            </div>
+
+            {/* Re-upload section */}
+            {showReupload && (
+              <div style={{
+                background: 'var(--surface)', border: '1px solid var(--border)',
+                borderRadius: 18, padding: 28, marginBottom: 20,
+              }}>
+                <ResumeUpload embedded onComplete={() => { setShowReupload(false); loadData(); }} />
+              </div>
+            )}
+
             <div style={{
               background: 'var(--surface)', border: '1px solid var(--border)',
               borderRadius: 18, padding: 28, position: 'relative', overflow: 'hidden',

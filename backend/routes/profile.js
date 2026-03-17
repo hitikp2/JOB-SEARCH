@@ -103,29 +103,44 @@ router.post('/resume', authMiddleware, async (req, res) => {
   }
 });
 
-// ── UPLOAD RESUME (file) ──
+// ── UPLOAD RESUME (file) ── Supports: PDF, TXT, JPG, JPEG, PNG, DOC, DOCX
 router.post('/resume/upload', authMiddleware, upload.single('resume'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
-    // For MVP: handle plain text files. PDF parsing would use pdf-parse.
     let resumeText;
+    const mime = req.file.mimetype;
 
-    if (req.file.mimetype === 'text/plain') {
+    if (mime === 'text/plain') {
       resumeText = req.file.buffer.toString('utf-8');
-    } else if (req.file.mimetype === 'application/pdf') {
-      // Dynamic import for pdf-parse
+    } else if (mime === 'application/pdf') {
       const pdfParse = (await import('pdf-parse')).default;
       const pdf = await pdfParse(req.file.buffer);
       resumeText = pdf.text;
+    } else if (mime === 'image/jpeg' || mime === 'image/png' || mime === 'image/jpg') {
+      // For images: encode as base64 and use AI to extract text
+      const base64 = req.file.buffer.toString('base64');
+      const { extractTextFromImage } = await import('../services/ai.js');
+      resumeText = await extractTextFromImage(base64, mime);
+    } else if (
+      mime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+      mime === 'application/msword'
+    ) {
+      // DOCX support via mammoth
+      const mammoth = (await import('mammoth')).default;
+      const result = await mammoth.extractRawText({ buffer: req.file.buffer });
+      resumeText = result.value;
     } else {
-      return res.status(400).json({ error: 'Unsupported file type. Use .txt or .pdf' });
+      return res.status(400).json({
+        error: 'Unsupported file type. Accepted: .txt, .pdf, .jpg, .png, .doc, .docx'
+      });
     }
 
-    // Reuse the text-based resume endpoint logic
-    req.body = { resume_text: resumeText };
+    if (!resumeText || resumeText.trim().length < 30) {
+      return res.status(400).json({ error: 'Could not extract enough text from the file. Try pasting your resume text instead.' });
+    }
 
     // Store and extract
     await supabase.from('users').update({ resume_text: resumeText }).eq('id', req.userId);

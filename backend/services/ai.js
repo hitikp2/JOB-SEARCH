@@ -94,6 +94,83 @@ Extract:
 }
 
 // ============================================
+// EXTRACT TEXT FROM IMAGE (for JPG/PNG resumes)
+// ============================================
+export async function extractTextFromImage(base64Data, mimeType) {
+  if (AI_PROVIDER === 'gemini' && GEMINI_KEY) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{
+          parts: [
+            { text: 'Extract ALL text content from this resume/document image. Return the complete text exactly as it appears, preserving structure. Return ONLY the extracted text, no commentary.' },
+            { inline_data: { mime_type: mimeType, data: base64Data } }
+          ]
+        }],
+        generationConfig: { temperature: 0.1, maxOutputTokens: 4000 }
+      })
+    });
+    if (!response.ok) throw new Error(`Gemini vision error: ${response.status}`);
+    const data = await response.json();
+    return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  } else if (OPENAI_KEY) {
+    const OpenAI = (await import('openai')).default;
+    const openai = new OpenAI({ apiKey: OPENAI_KEY });
+    const response = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      max_tokens: 4000,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Extract ALL text content from this resume/document image. Return the complete text exactly as it appears, preserving structure. Return ONLY the extracted text, no commentary.' },
+          { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64Data}` } }
+        ]
+      }]
+    });
+    return response.choices[0].message.content.trim();
+  }
+  throw new Error('No AI provider configured for image extraction.');
+}
+
+// ============================================
+// GENERATE AI INSIGHTS FOR USER
+// ============================================
+export async function generateInsights(profile, matches, experiences) {
+  const systemPrompt = `You are a career advisor AI. Analyze the user's job search data and provide actionable insights.
+Return ONLY valid JSON with this structure:
+{
+  "summary": "1-2 sentence overview of their job search status",
+  "strengths": ["strength1", "strength2", "strength3"],
+  "improvements": ["suggestion1", "suggestion2", "suggestion3"],
+  "skill_gaps": ["skill1", "skill2"],
+  "market_trends": "1-2 sentences about relevant market trends for their roles",
+  "next_steps": ["action1", "action2", "action3"],
+  "match_quality": "low|medium|high",
+  "confidence_score": 75
+}`;
+
+  const context = `User Profile:
+- Roles: ${(profile.primary_roles || []).join(', ')}
+- Skills: ${(profile.skills || []).join(', ')}
+- Level: ${profile.seniority_level || 'unknown'}
+- Experience: ${profile.years_experience || 0} years
+- Industries: ${(profile.industries || []).join(', ')}
+- Locations: ${(profile.preferred_locations || []).join(', ')}
+- Remote: ${profile.remote_preference || 'flexible'}
+- Salary: ${profile.salary_expectation || 'not specified'}
+
+Recent Matches (${matches.length}):
+${matches.slice(0, 5).map(m => `- ${m.jobs?.title || 'Unknown'} at ${m.jobs?.company || 'Unknown'} (Score: ${m.score})`).join('\n')}
+
+User Activity (${experiences.length} actions):
+${experiences.slice(0, 10).map(e => `- ${e.action}${e.rating ? ` (rated ${e.rating}/5)` : ''}${e.feedback_text ? `: ${e.feedback_text}` : ''}`).join('\n')}`;
+
+  return callAI(systemPrompt, context);
+}
+
+// ============================================
 // JOB SUMMARIZATION (run per user, 3-5 jobs)
 // ============================================
 export async function summarizeJobs(jobs) {
