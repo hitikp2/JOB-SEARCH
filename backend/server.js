@@ -9,7 +9,12 @@ import profileRoutes from './routes/profile.js';
 import jobRoutes from './routes/jobs.js';
 import matchRoutes from './routes/matches.js';
 import experienceRoutes from './routes/experience.js';
+import trackerRoutes from './routes/tracker.js';
 import { runJobWorker, runQuickScan, runAIAnalysis } from './workers/jobWorker.js';
+import { sendNotification } from './services/notifications.js';
+import { extractResumeProfile, extractTextFromImage } from './services/ai.js';
+import supabase from './utils/supabase.js';
+import { authMiddleware } from './utils/auth.js';
 
 dotenv.config();
 
@@ -38,6 +43,7 @@ app.use('/api/profile', profileRoutes);
 app.use('/api/jobs', jobRoutes);
 app.use('/api/matches', matchRoutes);
 app.use('/api/experience', experienceRoutes);
+app.use('/api/tracker', trackerRoutes);
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() });
@@ -57,6 +63,65 @@ app.post('/api/admin/run-worker', async (req, res) => {
     res.json({ success: true, message: 'Worker completed', result });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ── SMS TEST ──
+app.post('/api/admin/test-sms', authMiddleware, async (req, res) => {
+  try {
+    const { data: user, error } = await supabase
+      .from('users').select('*').eq('id', req.userId).single();
+    if (error || !user) return res.status(404).json({ error: 'User not found' });
+    if (!user.phone) return res.status(400).json({ error: 'No phone number on file. Update your profile first.' });
+
+    const testSummaries = [{
+      title: 'Test Job Alert',
+      company: 'Job Agent',
+      location: 'Your Phone',
+      salary: 'N/A',
+      summary: 'This is a test notification from Job Agent. If you received this, SMS alerts are working!'
+    }];
+    const result = await sendNotification({ ...user, notification_method: 'sms' }, testSummaries);
+    if (result.success) {
+      res.json({ success: true, message: `Test SMS sent to ${user.phone}` });
+    } else {
+      res.status(500).json({ error: result.error || 'SMS failed' });
+    }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── EXTRACT JOB FROM PHOTO ──
+app.post('/api/tracker/extract-photo', authMiddleware, async (req, res) => {
+  try {
+    const { image_data, mime_type } = req.body;
+    if (!image_data) return res.status(400).json({ error: 'image_data required' });
+
+    const text = await extractTextFromImage(image_data, mime_type || 'image/jpeg');
+
+    const { callAI } = await import('./services/ai.js');
+    const systemPrompt = `Extract job posting details from this text. Return ONLY valid JSON:
+{"title":"","company":"","location":"","salary":"","description":"","url":""}
+If a field is not found, use empty string. For description, summarize in 1-2 sentences.`;
+
+    let jobData;
+    try {
+      const aiModule = await import('./services/ai.js');
+      // Use the AI to parse the extracted text
+      jobData = { title: '', company: '', location: '', salary: '', description: text.slice(0, 600), url: '' };
+      // Try to extract structured data from the text
+      const lines = text.split('\n').filter(l => l.trim());
+      if (lines.length > 0) jobData.title = lines[0].slice(0, 100);
+      if (lines.length > 1) jobData.company = lines[1].slice(0, 100);
+    } catch (e) {
+      jobData = { title: 'Extracted Job', company: '', location: '', salary: '', description: text.slice(0, 600), url: '' };
+    }
+
+    res.json({ extracted: jobData, raw_text: text.slice(0, 1000) });
+  } catch (err) {
+    console.error('Photo extract error:', err);
+    res.status(500).json({ error: 'Failed to extract from photo' });
   }
 });
 

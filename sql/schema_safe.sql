@@ -138,6 +138,23 @@ CREATE INDEX IF NOT EXISTS idx_ai_insights_user ON ai_insights(user_id, created_
 
 ALTER TABLE ai_insights ENABLE ROW LEVEL SECURITY;
 
+-- ── Saved Jobs / Application Tracker ──
+CREATE TABLE IF NOT EXISTS saved_jobs (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  job_id UUID REFERENCES jobs(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'saved',
+  notes TEXT,
+  applied_date TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_saved_jobs_user_job ON saved_jobs(user_id, job_id);
+CREATE INDEX IF NOT EXISTS idx_saved_jobs_user ON saved_jobs(user_id, status, created_at DESC);
+
+ALTER TABLE saved_jobs ENABLE ROW LEVEL SECURITY;
+
 -- ── Updated_at trigger ──
 CREATE OR REPLACE FUNCTION update_updated_at()
 RETURNS TRIGGER AS $$

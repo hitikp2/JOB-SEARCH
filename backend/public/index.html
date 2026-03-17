@@ -361,6 +361,109 @@
       );
     }
 
+    // ── ADD JOB MODAL ──
+    function AddJobModal({ onClose, onAdded }) {
+      const [mode, setMode] = useState('manual');
+      const [form, setForm] = useState({ title:'', company:'', location:'', salary:'', description:'', url:'' });
+      const [loading, setLoading] = useState(false);
+      const [error, setError] = useState('');
+      const [photoFile, setPhotoFile] = useState(null);
+      const [extractedText, setExtractedText] = useState('');
+
+      const set = (k, v) => setForm(f => ({...f, [k]: v}));
+
+      const handlePhotoUpload = async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        setPhotoFile(file);
+        setLoading(true); setError('');
+        try {
+          const reader = new FileReader();
+          reader.onload = async () => {
+            const base64 = reader.result.split(',')[1];
+            const res = await api('/tracker/extract-photo', { method:'POST', body:{ image_data: base64, mime_type: file.type } });
+            if (res.extracted) {
+              setForm(f => ({...f, ...res.extracted}));
+              setExtractedText(res.raw_text || '');
+            }
+            setLoading(false);
+          };
+          reader.readAsDataURL(file);
+        } catch(e) { setError(e.message); setLoading(false); }
+      };
+
+      const handleLinkPaste = async () => {
+        if (!form.url) return;
+        set('description', 'Job from: ' + form.url);
+      };
+
+      const submit = async (e) => {
+        e.preventDefault(); setError(''); setLoading(true);
+        try {
+          if (!form.title) { setError('Job title is required'); setLoading(false); return; }
+          await api('/tracker/submit-job', { method:'POST', body: form });
+          onAdded();
+        } catch(e) { setError(e.message); }
+        setLoading(false);
+      };
+
+      return (
+        <div className="modal-overlay" onClick={onClose}>
+          <div className="modal-box" onClick={e=>e.stopPropagation()} style={{ padding:28 }}>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:22 }}>
+              <h2 style={{ margin:0, fontSize:20, fontWeight:600 }}>Add Job</h2>
+              <button onClick={onClose} style={{ background:'none', border:'none', color:'var(--text-dim)', fontSize:20, cursor:'pointer' }}>×</button>
+            </div>
+
+            {/* Mode Toggle */}
+            <div style={{ display:'flex', gap:4, background:'var(--bg)', borderRadius:10, padding:4, marginBottom:20 }}>
+              {[{id:'manual',l:'Manual Entry'},{id:'link',l:'From Link'},{id:'photo',l:'From Photo'}].map(m => (
+                <button key={m.id} onClick={()=>{setMode(m.id);setError('');}} className="btn" style={{ flex:1, padding:'9px 0', borderRadius:8, fontSize:12, background:mode===m.id?'var(--accent)':'transparent', color:mode===m.id?'#fff':'var(--text-muted)' }}>{m.l}</button>
+              ))}
+            </div>
+
+            {mode === 'photo' && (
+              <div style={{ marginBottom:16 }}>
+                <div className={'drop-zone' + (photoFile ? ' has-file' : '')} onClick={()=>document.getElementById('job-photo-input')?.click()} style={{ minHeight:120 }}>
+                  <input id="job-photo-input" type="file" accept="image/*" onChange={handlePhotoUpload} style={{display:'none'}} />
+                  {photoFile ? (
+                    <><div style={{fontSize:24}}>✅</div><div style={{fontSize:13,color:'#34d399'}}>{photoFile.name}</div></>
+                  ) : (
+                    <><div style={{fontSize:28,opacity:0.4}}>📸</div><div style={{fontSize:13,color:'var(--text-dim)'}}>Click to upload a screenshot or photo of a job posting</div></>
+                  )}
+                </div>
+                {extractedText && <div style={{ marginTop:10, padding:10, background:'var(--bg)', borderRadius:8, fontSize:11, color:'var(--text-dim)', maxHeight:80, overflow:'auto' }}>{extractedText}</div>}
+              </div>
+            )}
+
+            {mode === 'link' && (
+              <div style={{ marginBottom:16 }}>
+                <input className="input" placeholder="Paste job posting URL" value={form.url} onChange={e=>set('url',e.target.value)} onBlur={handleLinkPaste} />
+                <p style={{ fontSize:11, color:'var(--text-dim)', marginTop:6 }}>Paste the URL, then fill in the details below</p>
+              </div>
+            )}
+
+            <form onSubmit={submit} style={{ display:'flex', flexDirection:'column', gap:12 }}>
+              <input className="input" placeholder="Job Title *" value={form.title} onChange={e=>set('title',e.target.value)} required />
+              <div style={{ display:'flex', gap:10 }}>
+                <input className="input" placeholder="Company" value={form.company} onChange={e=>set('company',e.target.value)} style={{flex:1}} />
+                <input className="input" placeholder="Location" value={form.location} onChange={e=>set('location',e.target.value)} style={{flex:1}} />
+              </div>
+              <div style={{ display:'flex', gap:10 }}>
+                <input className="input" placeholder="Salary (e.g. $60k-$80k)" value={form.salary} onChange={e=>set('salary',e.target.value)} style={{flex:1}} />
+                {mode !== 'link' && <input className="input" placeholder="Application URL" value={form.url} onChange={e=>set('url',e.target.value)} style={{flex:1}} />}
+              </div>
+              <textarea className="input" placeholder="Description / Notes" value={form.description} onChange={e=>set('description',e.target.value)} rows={3} style={{ resize:'vertical', minHeight:70 }} />
+              {error && <p style={{ color:'var(--red)', fontSize:13, margin:0 }}>{error}</p>}
+              <button type="submit" disabled={loading} className="btn" style={{ width:'100%', padding:14, background:loading?'var(--text-dim)':'var(--accent)', color:'#fff', fontSize:14, marginTop:4 }}>
+                {loading ? 'Saving...' : 'Add to Tracker'}
+              </button>
+            </form>
+          </div>
+        </div>
+      );
+    }
+
     // ── DASHBOARD ──
     function Dashboard({ onLogout }) {
       const [tab, setTab] = useState('matches');
@@ -372,6 +475,13 @@
       const [testResult, setTestResult] = useState(null);
       const [showInsights, setShowInsights] = useState(false);
       const [showReupload, setShowReupload] = useState(false);
+      const [savedJobs, setSavedJobs] = useState({});
+      const [trackerJobs, setTrackerJobs] = useState([]);
+      const [trackerFilter, setTrackerFilter] = useState('all');
+      const [trackerStats, setTrackerStats] = useState({ saved:0, applied:0, interviewing:0, offer:0, rejected:0 });
+      const [showAddJob, setShowAddJob] = useState(false);
+      const [smsTestResult, setSmsTestResult] = useState(null);
+      const [smsTestLoading, setSmsTestLoading] = useState(false);
 
       const loadData = useCallback(() => {
         setLoading(true);
@@ -379,7 +489,19 @@
           api('/matches').catch(()=>({matches:[]})),
           api('/matches/stats').catch(()=>({total_matches:0,today_matches:0,notifications_sent:0,avg_score:0})),
           api('/profile').catch(()=>null),
-        ]).then(([m,s,p]) => { setMatches(m.matches||[]); setStats(s); setProfile(p); setLoading(false); });
+          api('/tracker').catch(()=>({saved_jobs:[]})),
+          api('/tracker/stats').catch(()=>({saved:0,applied:0,interviewing:0,offer:0,rejected:0})),
+        ]).then(([m,s,p,t,ts]) => {
+          setMatches(m.matches||[]);
+          setStats(s);
+          setProfile(p);
+          const saved = {};
+          (t.saved_jobs||[]).forEach(sj => { if(sj.jobs?.id) saved[sj.jobs.id] = sj; });
+          setSavedJobs(saved);
+          setTrackerJobs(t.saved_jobs||[]);
+          setTrackerStats(ts);
+          setLoading(false);
+        });
       }, []);
 
       useEffect(() => { loadData(); }, [loadData]);
@@ -404,6 +526,31 @@
         setTestRunning(false); setScanMode(null);
       };
 
+      const toggleSave = async (jobId, currentStatus) => {
+        if (savedJobs[jobId]) {
+          await api(`/tracker/${savedJobs[jobId].id}`, { method:'DELETE' }).catch(()=>{});
+          setSavedJobs(prev => { const n = {...prev}; delete n[jobId]; return n; });
+        } else {
+          const res = await api('/tracker', { method:'POST', body:{ job_id: jobId, status: 'saved' } }).catch(()=>null);
+          if (res?.saved_job) setSavedJobs(prev => ({...prev, [jobId]: res.saved_job}));
+        }
+        loadData();
+      };
+
+      const updateTrackerStatus = async (id, status) => {
+        await api(`/tracker/${id}`, { method:'PATCH', body:{ status } }).catch(()=>{});
+        loadData();
+      };
+
+      const handleSmsTest = async () => {
+        setSmsTestLoading(true); setSmsTestResult(null);
+        try {
+          const res = await api('/admin/test-sms', { method:'POST' });
+          setSmsTestResult({ ok:true, msg: res.message });
+        } catch(e) { setSmsTestResult({ ok:false, msg: e.message }); }
+        setSmsTestLoading(false);
+      };
+
       return (
         <div style={{ minHeight:'100vh' }}>
           <div className="grid-bg" />
@@ -417,7 +564,7 @@
               <div style={{ width:6, height:6, borderRadius:'50%', background:'var(--green)', boxShadow:'0 0 8px #34d39960', animation:'pulse 2s ease-in-out infinite' }} />
             </div>
             <nav style={{ display:'flex', gap:2 }}>
-              {[{id:'matches',icon:'🎯',l:'Matches'},{id:'profile',icon:'👤',l:'Profile'},{id:'settings',icon:'⚙️',l:'Settings'}].map(n => (
+              {[{id:'matches',icon:'🎯',l:'Matches'},{id:'tracker',icon:'📋',l:'Tracker'},{id:'profile',icon:'👤',l:'Profile'},{id:'settings',icon:'⚙️',l:'Settings'}].map(n => (
                 <button key={n.id} onClick={()=>setTab(n.id)} className={'nav-btn'+(tab===n.id?' active':'')}><span style={{fontSize:13}}>{n.icon}</span> {n.l}</button>
               ))}
             </nav>
@@ -485,14 +632,17 @@
                 <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
                   {matches.map((m,i) => {
                     const j = m.jobs || m.job || {};
+                    const isSaved = j.id && savedJobs[j.id];
+                    const savedStatus = isSaved ? savedJobs[j.id].status : null;
                     return (
-                      <div key={m.id} className={'match-card fade-up fade-d'+Math.min(i,4)} onClick={()=>{if(j.url){window.open(j.url,'_blank');trackAction('apply_click',m.id);}}}>
+                      <div key={m.id} className={'match-card fade-up fade-d'+Math.min(i,4)}>
                         <div style={{ display:'flex', gap:16, alignItems:'flex-start' }}>
                           <ScoreRing score={m.score} />
-                          <div style={{ flex:1 }}>
+                          <div style={{ flex:1, cursor:'pointer' }} onClick={()=>{if(j.url && !j.url.startsWith('user-added')){window.open(j.url,'_blank');trackAction('apply_click',m.id);}}}>
                             <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
                               <h3 style={{ margin:0, fontSize:16, fontWeight:600 }}>{j.title||'Untitled'}</h3>
                               {m.sent && <Tag color="#34d399">Sent</Tag>}
+                              {savedStatus && <Tag color={savedStatus==='applied'?'#fbbf24':savedStatus==='interviewing'?'#60a5fa':savedStatus==='offer'?'#34d399':savedStatus==='rejected'?'#ef4444':'#a78bfa'}>{savedStatus}</Tag>}
                             </div>
                             <div style={{ fontSize:13, color:'var(--text-dim)', marginTop:3, fontFamily:"'Source Serif 4',serif" }}>{j.company}{j.company&&j.location?' · ':''}{j.location}</div>
                             <div style={{ display:'flex', gap:6, marginTop:10, flexWrap:'wrap' }}>
@@ -502,6 +652,20 @@
                             </div>
                             {m.ai_summary && <p style={{ margin:'14px 0 0', fontSize:13.5, color:'var(--text-muted)', lineHeight:1.65, fontFamily:"'Source Serif 4',serif", fontStyle:'italic' }}>{m.ai_summary}</p>}
                           </div>
+                          <div style={{ display:'flex', flexDirection:'column', gap:6, flexShrink:0 }}>
+                            <button onClick={(e)=>{e.stopPropagation();if(j.id)toggleSave(j.id);}} title={isSaved?'Unsave':'Save'} style={{ background:'none', border:'1px solid '+(isSaved?'#fbbf2440':'var(--border)'), borderRadius:8, width:36, height:36, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', fontSize:16, color:isSaved?'#fbbf24':'var(--text-dim)', transition:'all 0.2s' }}>
+                              {isSaved ? '★' : '☆'}
+                            </button>
+                            {isSaved && (
+                              <select value={savedStatus||'saved'} onClick={e=>e.stopPropagation()} onChange={e=>{e.stopPropagation();updateTrackerStatus(savedJobs[j.id].id, e.target.value);}} style={{ background:'var(--bg)', color:'var(--text-muted)', border:'1px solid var(--border)', borderRadius:6, padding:'4px 2px', fontSize:9, fontFamily:'inherit', cursor:'pointer', textAlign:'center' }}>
+                                <option value="saved">Saved</option>
+                                <option value="applied">Applied</option>
+                                <option value="interviewing">Interview</option>
+                                <option value="offer">Offer</option>
+                                <option value="rejected">Rejected</option>
+                              </select>
+                            )}
+                          </div>
                         </div>
                       </div>
                     );
@@ -509,6 +673,75 @@
                 </div>
               )}
             </>}
+
+            {/* TRACKER TAB */}
+            {tab==='tracker' && <>
+              {/* Tracker Stats */}
+              <div style={{ display:'flex', gap:10, marginBottom:24, flexWrap:'wrap' }}>
+                {[{l:'Saved',v:trackerStats.saved,c:'#a78bfa',s:'saved'},{l:'Applied',v:trackerStats.applied,c:'#fbbf24',s:'applied'},{l:'Interviewing',v:trackerStats.interviewing,c:'#60a5fa',s:'interviewing'},{l:'Offers',v:trackerStats.offer,c:'#34d399',s:'offer'},{l:'Rejected',v:trackerStats.rejected,c:'#ef4444',s:'rejected'}].map(s => (
+                  <div key={s.l} onClick={()=>setTrackerFilter(trackerFilter===s.s?'all':s.s)} className="stat-card" style={{ cursor:'pointer', flex:1, minWidth:100, border:trackerFilter===s.s?`1px solid ${s.c}60`:'1px solid var(--border)', background:trackerFilter===s.s?s.c+'10':'var(--surface)' }}>
+                    <div className="label" style={{color:s.c}}>{s.l}</div>
+                    <div style={{ fontSize:28, fontWeight:700, lineHeight:1 }}>{s.v}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Add Job Button */}
+              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16 }}>
+                <h2 style={{ fontSize:18, fontWeight:600 }}>{trackerFilter==='all'?'All Tracked Jobs':trackerFilter.charAt(0).toUpperCase()+trackerFilter.slice(1)}</h2>
+                <button onClick={()=>setShowAddJob(true)} className="btn" style={{ display:'flex', alignItems:'center', gap:6, padding:'8px 16px', background:'linear-gradient(135deg,#a78bfa20,#a78bfa10)', border:'1px solid #a78bfa40', borderRadius:8, color:'#a78bfa', fontSize:12 }}>
+                  + Add Job
+                </button>
+              </div>
+
+              {/* Tracker List */}
+              {trackerJobs.filter(tj => trackerFilter==='all' || tj.status===trackerFilter).length === 0 ? (
+                <div className="card" style={{ textAlign:'center', padding:50 }}>
+                  <div style={{fontSize:32,marginBottom:10}}>📋</div>
+                  <h3 style={{fontSize:16}}>No {trackerFilter==='all'?'tracked':trackerFilter} jobs yet</h3>
+                  <p style={{color:'var(--text-muted)',fontSize:13,marginTop:6}}>Star jobs from Matches or add your own.</p>
+                </div>
+              ) : (
+                <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+                  {trackerJobs.filter(tj => trackerFilter==='all' || tj.status===trackerFilter).map((tj,i) => {
+                    const j = tj.jobs || {};
+                    const sc = {saved:'#a78bfa',applied:'#fbbf24',interviewing:'#60a5fa',offer:'#34d399',rejected:'#ef4444'};
+                    return (
+                      <div key={tj.id} className="match-card fade-up" style={{ borderLeft:`3px solid ${sc[tj.status]||'#a78bfa'}` }}>
+                        <div style={{ display:'flex', gap:14, alignItems:'flex-start' }}>
+                          <div style={{ flex:1 }}>
+                            <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
+                              <h3 style={{ margin:0, fontSize:15, fontWeight:600, cursor:j.url&&!j.url.startsWith('user-added')?'pointer':'default' }} onClick={()=>{if(j.url&&!j.url.startsWith('user-added'))window.open(j.url,'_blank');}}>{j.title||'Untitled'}</h3>
+                              <Tag color={sc[tj.status]}>{tj.status}</Tag>
+                            </div>
+                            <div style={{ fontSize:13, color:'var(--text-dim)', marginTop:3 }}>{j.company}{j.company&&j.location?' · ':''}{j.location}</div>
+                            <div style={{ display:'flex', gap:6, marginTop:8, flexWrap:'wrap' }}>
+                              {j.salary && <Tag color="#34d399">{j.salary}</Tag>}
+                              {j.location?.toLowerCase().includes('remote') && <Tag color="#60a5fa" ghost>Remote</Tag>}
+                              {tj.applied_date && <Tag color="#6b6b85" ghost>Applied {timeAgo(tj.applied_date)}</Tag>}
+                            </div>
+                            {tj.notes && <p style={{ margin:'8px 0 0', fontSize:12, color:'var(--text-dim)', fontStyle:'italic' }}>{tj.notes}</p>}
+                          </div>
+                          <div style={{ display:'flex', gap:6, alignItems:'center', flexShrink:0 }}>
+                            <select value={tj.status} onChange={e=>updateTrackerStatus(tj.id, e.target.value)} style={{ background:'var(--bg)', color:'var(--text)', border:'1px solid var(--border)', borderRadius:8, padding:'6px 8px', fontSize:11, fontFamily:'inherit', cursor:'pointer' }}>
+                              <option value="saved">Saved</option>
+                              <option value="applied">Applied</option>
+                              <option value="interviewing">Interviewing</option>
+                              <option value="offer">Offer</option>
+                              <option value="rejected">Rejected</option>
+                            </select>
+                            <button onClick={()=>{api(`/tracker/${tj.id}`,{method:'DELETE'}).then(()=>loadData());}} style={{ background:'none', border:'1px solid #ef444430', borderRadius:8, width:32, height:32, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', fontSize:13, color:'#ef4444' }}>×</button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </>}
+
+            {/* ADD JOB MODAL */}
+            {showAddJob && <AddJobModal onClose={()=>setShowAddJob(false)} onAdded={()=>{setShowAddJob(false);loadData();}} />}
 
             {/* PROFILE TAB */}
             {tab==='profile' && profile && <div>
@@ -552,6 +785,17 @@
                   ))}
                 </div>
               </div>
+              <div className="card" style={{ borderRadius:18, marginBottom:20 }}>
+                <div className="label">Test SMS Notification</div>
+                <p style={{ fontSize:12, color:'var(--text-dim)', marginBottom:12 }}>Send a test SMS to your phone number to verify it works.</p>
+                <div style={{ display:'flex', gap:10, alignItems:'center' }}>
+                  <button onClick={handleSmsTest} disabled={smsTestLoading} className="btn" style={{ padding:'10px 20px', borderRadius:10, fontSize:13, background:smsTestLoading?'var(--text-dim)':'linear-gradient(135deg,#60a5fa20,#60a5fa10)', color:smsTestLoading?'var(--text-dim)':'#60a5fa', border:'1px solid #60a5fa40' }}>
+                    {smsTestLoading ? 'Sending...' : 'Send Test SMS'}
+                  </button>
+                  {smsTestResult && <span style={{ fontSize:12, color:smsTestResult.ok?'#34d399':'#ef4444' }}>{smsTestResult.ok?'✓':'✗'} {smsTestResult.msg}</span>}
+                </div>
+              </div>
+
               <div className="card" style={{ borderRadius:18, marginBottom:20 }}>
                 <div className="label">Agent Schedule</div>
                 <div style={{ display:'flex', gap:12 }}>
