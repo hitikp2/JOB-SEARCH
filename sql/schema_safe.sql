@@ -21,6 +21,13 @@ DO $$ BEGIN
   ALTER TABLE users ADD COLUMN IF NOT EXISTS notification_method TEXT DEFAULT 'email';
   ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_complete BOOLEAN DEFAULT FALSE;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS job_sources JSONB DEFAULT '["jsearch"]';
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS custom_sources TEXT[] DEFAULT '{}';
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS job_type TEXT DEFAULT 'any';
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS work_schedule TEXT DEFAULT 'full_time';
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS location_type TEXT DEFAULT 'any';
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS search_radius INTEGER DEFAULT 50;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS sms_template TEXT;
 EXCEPTION WHEN undefined_table THEN
   -- Table doesn't exist yet, create it
   CREATE TABLE users (
@@ -39,6 +46,13 @@ EXCEPTION WHEN undefined_table THEN
     salary_expectation TEXT,
     notification_method TEXT DEFAULT 'email',
     profile_complete BOOLEAN DEFAULT FALSE,
+    job_sources JSONB DEFAULT '["jsearch"]',
+    custom_sources TEXT[] DEFAULT '{}',
+    job_type TEXT DEFAULT 'any',
+    work_schedule TEXT DEFAULT 'full_time',
+    location_type TEXT DEFAULT 'any',
+    search_radius INTEGER DEFAULT 50,
+    sms_template TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
   );

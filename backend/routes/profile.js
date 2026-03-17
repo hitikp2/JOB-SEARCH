@@ -12,7 +12,7 @@ router.get('/', authMiddleware, async (req, res) => {
   try {
     const { data: user, error } = await supabase
       .from('users')
-      .select('id, email, phone, primary_roles, seniority_level, years_experience, industries, skills, preferred_locations, remote_preference, salary_expectation, notification_method, profile_complete, created_at')
+      .select('id, email, phone, primary_roles, seniority_level, years_experience, industries, skills, preferred_locations, remote_preference, salary_expectation, notification_method, profile_complete, job_sources, custom_sources, job_type, work_schedule, location_type, search_radius, sms_template, created_at')
       .eq('id', req.userId)
       .single();
 
@@ -29,7 +29,9 @@ router.patch('/', authMiddleware, async (req, res) => {
     const allowed = [
       'phone', 'primary_roles', 'skills', 'preferred_locations',
       'remote_preference', 'salary_expectation', 'notification_method',
-      'seniority_level', 'years_experience', 'industries'
+      'seniority_level', 'years_experience', 'industries',
+      'job_sources', 'custom_sources', 'job_type', 'work_schedule',
+      'location_type', 'search_radius', 'sms_template'
     ];
 
     const updates = {};
@@ -46,7 +48,7 @@ router.patch('/', authMiddleware, async (req, res) => {
       .from('users')
       .update(updates)
       .eq('id', req.userId)
-      .select('id, email, primary_roles, skills, preferred_locations, remote_preference, salary_expectation, notification_method, profile_complete')
+      .select('id, email, phone, primary_roles, skills, preferred_locations, remote_preference, salary_expectation, notification_method, profile_complete, job_sources, custom_sources, job_type, work_schedule, location_type, search_radius, sms_template')
       .single();
 
     if (error) throw error;

@@ -361,6 +361,169 @@
       );
     }
 
+    // ── SETTINGS TAB ──
+    function SettingsTab({ profile, setProfile, smsTestLoading, smsTestResult, handleSmsTest }) {
+      const [phoneEdit, setPhoneEdit] = useState(profile?.phone || '');
+      const [phoneSaving, setPhoneSaving] = useState(false);
+      const [phoneSaved, setPhoneSaved] = useState(false);
+      const [customUrl, setCustomUrl] = useState('');
+
+      const savePref = async (key, val) => {
+        await api('/profile', { method:'PATCH', body:{ [key]: val } }).catch(()=>{});
+        setProfile(p => ({...p, [key]: val}));
+      };
+
+      const savePhone = async () => {
+        setPhoneSaving(true);
+        await savePref('phone', phoneEdit);
+        setPhoneSaved(true); setPhoneSaving(false);
+        setTimeout(() => setPhoneSaved(false), 2000);
+      };
+
+      const sources = profile?.job_sources || ['jsearch'];
+      const customSources = profile?.custom_sources || [];
+
+      const toggleSource = (src) => {
+        const current = [...sources];
+        const idx = current.indexOf(src);
+        if (idx >= 0) { current.splice(idx, 1); } else { current.push(src); }
+        if (current.length === 0) current.push('jsearch');
+        savePref('job_sources', current);
+      };
+
+      const addCustomSource = () => {
+        if (!customUrl.trim()) return;
+        const updated = [...customSources, customUrl.trim()];
+        savePref('custom_sources', updated);
+        setCustomUrl('');
+      };
+
+      const removeCustomSource = (i) => {
+        const updated = customSources.filter((_, idx) => idx !== i);
+        savePref('custom_sources', updated);
+      };
+
+      const BtnToggle = ({ active, onClick, children, color = 'var(--accent)' }) => (
+        <button onClick={onClick} className="btn" style={{ padding:'10px 16px', borderRadius:10, fontSize:12, background:active?color+'18':'transparent', color:active?color:'var(--text-dim)', border:'1px solid '+(active?color+'50':'var(--border)'), fontWeight:active?600:400 }}>{children}</button>
+      );
+
+      return (
+        <div>
+          <h2 style={{ margin:'0 0 18px', fontSize:18, fontWeight:600 }}>Settings</h2>
+
+          {/* ── JOB SOURCES ── */}
+          <div className="card" style={{ borderRadius:18, marginBottom:20 }}>
+            <div className="label">Job Sources</div>
+            <p style={{ fontSize:11, color:'var(--text-dim)', marginBottom:12 }}>Choose which job boards to search. JSearch aggregates from many sources.</p>
+            <div style={{ display:'flex', gap:8, flexWrap:'wrap', marginBottom:14 }}>
+              {[
+                { id:'jsearch', l:'All Sources (JSearch)', c:'#a78bfa' },
+                { id:'indeed', l:'Indeed', c:'#2164f3' },
+                { id:'ziprecruiter', l:'ZipRecruiter', c:'#34d399' },
+                { id:'glassdoor', l:'Glassdoor', c:'#0caa41' },
+                { id:'monster', l:'Monster', c:'#6e45e2' },
+                { id:'linkedin', l:'LinkedIn', c:'#0077b5' },
+                { id:'company_sites', l:'Company Websites', c:'#fbbf24' },
+              ].map(s => (
+                <BtnToggle key={s.id} active={sources.includes(s.id)} color={s.c} onClick={()=>toggleSource(s.id)}>{s.l}</BtnToggle>
+              ))}
+            </div>
+            <div className="label" style={{ marginTop:8 }}>Custom Websites</div>
+            <div style={{ display:'flex', gap:8, marginBottom:8 }}>
+              <input className="input" placeholder="e.g. careers.google.com" value={customUrl} onChange={e=>setCustomUrl(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')addCustomSource();}} style={{ flex:1 }} />
+              <button onClick={addCustomSource} className="btn" style={{ padding:'8px 16px', background:'#a78bfa18', color:'#a78bfa', border:'1px solid #a78bfa40', borderRadius:8, fontSize:12 }}>Add</button>
+            </div>
+            {customSources.length > 0 && (
+              <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
+                {customSources.map((cs, i) => (
+                  <span key={i} style={{ display:'inline-flex', alignItems:'center', gap:4, padding:'5px 10px', background:'var(--bg)', border:'1px solid var(--border)', borderRadius:8, fontSize:11, color:'var(--text-muted)' }}>
+                    {cs}
+                    <button onClick={()=>removeCustomSource(i)} style={{ background:'none', border:'none', color:'#ef4444', cursor:'pointer', fontSize:13, padding:0, lineHeight:1 }}>×</button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* ── JOB FILTERS ── */}
+          <div className="card" style={{ borderRadius:18, marginBottom:20 }}>
+            <div className="label">Job Type / Schedule</div>
+            <div style={{ display:'flex', gap:8, flexWrap:'wrap', marginBottom:16 }}>
+              {[{id:'full_time',l:'Full Time'},{id:'part_time',l:'Part Time'},{id:'contract',l:'Contract'},{id:'internship',l:'Internship'},{id:'any',l:'Any'}].map(t => (
+                <BtnToggle key={t.id} active={(profile?.work_schedule||'full_time')===t.id} color="#60a5fa" onClick={()=>savePref('work_schedule',t.id)}>{t.l}</BtnToggle>
+              ))}
+            </div>
+
+            <div className="label">Location Preference</div>
+            <div style={{ display:'flex', gap:8, flexWrap:'wrap', marginBottom:12 }}>
+              {[{id:'any',l:'Any'},{id:'remote',l:'Remote Only'},{id:'local',l:'Local / On-site'},{id:'hybrid',l:'Hybrid'}].map(t => (
+                <BtnToggle key={t.id} active={(profile?.location_type||'any')===t.id} color="#34d399" onClick={()=>savePref('location_type',t.id)}>{t.l}</BtnToggle>
+              ))}
+            </div>
+
+            {(profile?.location_type === 'local' || profile?.location_type === 'hybrid') && (
+              <div style={{ marginTop:8 }}>
+                <div className="label">Search Radius: {profile?.search_radius || 50} miles</div>
+                <input type="range" min="5" max="200" step="5" value={profile?.search_radius || 50} onChange={e=>savePref('search_radius', parseInt(e.target.value))} style={{ width:'100%', accentColor:'#34d399' }} />
+                <div style={{ display:'flex', justifyContent:'space-between', fontSize:10, color:'var(--text-dim)' }}><span>5 mi</span><span>50 mi</span><span>100 mi</span><span>200 mi</span></div>
+              </div>
+            )}
+          </div>
+
+          {/* ── NOTIFICATIONS ── */}
+          <div className="card" style={{ borderRadius:18, marginBottom:20 }}>
+            <div className="label">Notification Method</div>
+            <div style={{ display:'flex', gap:10, marginBottom:16 }}>
+              {['email','sms','both'].map(m => (
+                <BtnToggle key={m} active={profile?.notification_method===m} color="#a78bfa" onClick={()=>savePref('notification_method',m)}>{m.charAt(0).toUpperCase()+m.slice(1)}</BtnToggle>
+              ))}
+            </div>
+
+            <div className="label">Phone Number</div>
+            <div style={{ display:'flex', gap:8, marginBottom:12 }}>
+              <input className="input" placeholder="+1 (555) 123-4567" value={phoneEdit} onChange={e=>setPhoneEdit(e.target.value)} style={{ flex:1 }} />
+              <button onClick={savePhone} disabled={phoneSaving} className="btn" style={{ padding:'8px 16px', background:phoneSaved?'#34d39918':'#60a5fa18', color:phoneSaved?'#34d399':'#60a5fa', border:'1px solid '+(phoneSaved?'#34d39950':'#60a5fa40'), borderRadius:8, fontSize:12 }}>
+                {phoneSaving ? '...' : phoneSaved ? 'Saved!' : 'Save'}
+              </button>
+            </div>
+
+            <div style={{ display:'flex', gap:10, alignItems:'center' }}>
+              <button onClick={handleSmsTest} disabled={smsTestLoading} className="btn" style={{ padding:'10px 20px', borderRadius:10, fontSize:13, background:smsTestLoading?'var(--text-dim)':'linear-gradient(135deg,#60a5fa20,#60a5fa10)', color:smsTestLoading?'var(--text-dim)':'#60a5fa', border:'1px solid #60a5fa40' }}>
+                {smsTestLoading ? 'Sending...' : 'Send Test SMS'}
+              </button>
+              {smsTestResult && <span style={{ fontSize:12, color:smsTestResult.ok?'#34d399':'#ef4444' }}>{smsTestResult.ok?'✓':'✗'} {smsTestResult.msg}</span>}
+            </div>
+          </div>
+
+          {/* ── SCHEDULE ── */}
+          <div className="card" style={{ borderRadius:18, marginBottom:20 }}>
+            <div className="label">Agent Schedule</div>
+            <div style={{ display:'flex', gap:12 }}>
+              {['8:00 AM','1:00 PM','6:00 PM'].map((t,i) => (
+                <div key={t} style={{ flex:1, textAlign:'center', padding:'16px 12px', background:'var(--bg)', borderRadius:12, border:'1px solid var(--border)' }}>
+                  <div style={{ fontSize:18, fontWeight:700 }}>{t}</div>
+                  <div style={{ fontSize:10, color:'var(--text-dim)', marginTop:4, textTransform:'uppercase', letterSpacing:1 }}>{['Morning','Midday','Evening'][i]}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* ── COST ── */}
+          <div className="card" style={{ borderRadius:18 }}>
+            <div className="label">Cost Transparency</div>
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr 1fr', gap:12 }}>
+              {[{l:'AI/day',v:'~3',c:'#a78bfa'},{l:'Monthly',v:'$0.10',c:'#34d399'},{l:'Jobs',v:'100+',c:'#60a5fa'},{l:'Matches',v:'Top 3',c:'#fbbf24'}].map(c=>(
+                <div key={c.l} style={{ textAlign:'center', padding:'14px 8px', background:'var(--bg)', borderRadius:12, border:'1px solid var(--border)' }}>
+                  <div style={{ fontSize:20, fontWeight:700, color:c.c }}>{c.v}</div>
+                  <div style={{ fontSize:9, color:'var(--text-dim)', marginTop:4, textTransform:'uppercase', letterSpacing:1 }}>{c.l}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     // ── ADD JOB MODAL ──
     function AddJobModal({ onClose, onAdded }) {
       const [mode, setMode] = useState('manual');
@@ -775,50 +938,7 @@
             </div>}
 
             {/* SETTINGS TAB */}
-            {tab==='settings' && <div>
-              <h2 style={{ margin:'0 0 18px', fontSize:18, fontWeight:600 }}>Settings</h2>
-              <div className="card" style={{ borderRadius:18, marginBottom:20 }}>
-                <div className="label">Notification Method</div>
-                <div style={{ display:'flex', gap:10 }}>
-                  {['email','sms','both'].map(m => (
-                    <button key={m} onClick={async()=>{ await api('/profile',{method:'PATCH',body:{notification_method:m}}); setProfile(p=>({...p,notification_method:m})); }} className="btn" style={{ padding:'12px 24px', borderRadius:10, fontSize:13, textTransform:'capitalize', background:profile?.notification_method===m?'var(--accent-soft)':'transparent', color:profile?.notification_method===m?'var(--accent)':'var(--text-dim)', border:'1px solid '+(profile?.notification_method===m?'var(--accent-glow)':'var(--border)') }}>{m}</button>
-                  ))}
-                </div>
-              </div>
-              <div className="card" style={{ borderRadius:18, marginBottom:20 }}>
-                <div className="label">Test SMS Notification</div>
-                <p style={{ fontSize:12, color:'var(--text-dim)', marginBottom:12 }}>Send a test SMS to your phone number to verify it works.</p>
-                <div style={{ display:'flex', gap:10, alignItems:'center' }}>
-                  <button onClick={handleSmsTest} disabled={smsTestLoading} className="btn" style={{ padding:'10px 20px', borderRadius:10, fontSize:13, background:smsTestLoading?'var(--text-dim)':'linear-gradient(135deg,#60a5fa20,#60a5fa10)', color:smsTestLoading?'var(--text-dim)':'#60a5fa', border:'1px solid #60a5fa40' }}>
-                    {smsTestLoading ? 'Sending...' : 'Send Test SMS'}
-                  </button>
-                  {smsTestResult && <span style={{ fontSize:12, color:smsTestResult.ok?'#34d399':'#ef4444' }}>{smsTestResult.ok?'✓':'✗'} {smsTestResult.msg}</span>}
-                </div>
-              </div>
-
-              <div className="card" style={{ borderRadius:18, marginBottom:20 }}>
-                <div className="label">Agent Schedule</div>
-                <div style={{ display:'flex', gap:12 }}>
-                  {['8:00 AM','1:00 PM','6:00 PM'].map((t,i) => (
-                    <div key={t} style={{ flex:1, textAlign:'center', padding:'16px 12px', background:'var(--bg)', borderRadius:12, border:'1px solid var(--border)' }}>
-                      <div style={{ fontSize:18, fontWeight:700 }}>{t}</div>
-                      <div style={{ fontSize:10, color:'var(--text-dim)', marginTop:4, textTransform:'uppercase', letterSpacing:1 }}>{['Morning','Midday','Evening'][i]}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-              <div className="card" style={{ borderRadius:18 }}>
-                <div className="label">Cost Transparency</div>
-                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr 1fr', gap:12 }}>
-                  {[{l:'AI/day',v:'~3',c:'#a78bfa'},{l:'Monthly',v:'$0.10',c:'#34d399'},{l:'Jobs',v:'100+',c:'#60a5fa'},{l:'Matches',v:'Top 3',c:'#fbbf24'}].map(c=>(
-                    <div key={c.l} style={{ textAlign:'center', padding:'14px 8px', background:'var(--bg)', borderRadius:12, border:'1px solid var(--border)' }}>
-                      <div style={{ fontSize:20, fontWeight:700, color:c.c }}>{c.v}</div>
-                      <div style={{ fontSize:9, color:'var(--text-dim)', marginTop:4, textTransform:'uppercase', letterSpacing:1 }}>{c.l}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>}
+            {tab==='settings' && <SettingsTab profile={profile} setProfile={setProfile} smsTestLoading={smsTestLoading} smsTestResult={smsTestResult} handleSmsTest={handleSmsTest} />}
           </main>
         </div>
       );

@@ -4,17 +4,45 @@ dotenv.config();
 const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY;
 const JSEARCH_HOST = 'jsearch.p.rapidapi.com';
 
+// ── Supported job board sources ──
+const SOURCES = {
+  jsearch:    { name: 'JSearch (Multi-source)',  enabled: true },
+  indeed:     { name: 'Indeed',                  employer_filter: 'indeed.com' },
+  ziprecruiter: { name: 'ZipRecruiter',          employer_filter: 'ziprecruiter.com' },
+  glassdoor:  { name: 'Glassdoor',               employer_filter: 'glassdoor.com' },
+  monster:    { name: 'Monster',                  employer_filter: 'monster.com' },
+  linkedin:   { name: 'LinkedIn',                employer_filter: 'linkedin.com' },
+  company_sites: { name: 'Company Websites',     employer_filter: null },
+};
+
+export { SOURCES };
+
 /**
  * Fetch jobs from JSearch API (RapidAPI)
- * Filters to last 24 hours only
+ * Supports filters: employment_type, remote, radius
  */
-async function searchJobs(query, page = 1) {
+async function searchJobs(query, page = 1, filters = {}) {
   try {
     const url = new URL('https://jsearch.p.rapidapi.com/search');
     url.searchParams.set('query', query);
     url.searchParams.set('page', page.toString());
     url.searchParams.set('num_pages', '1');
     url.searchParams.set('date_posted', 'today');
+
+    // Employment type filter
+    if (filters.employment_type && filters.employment_type !== 'any') {
+      url.searchParams.set('employment_types', filters.employment_type);
+    }
+
+    // Remote filter
+    if (filters.remote_only) {
+      url.searchParams.set('remote_jobs_only', 'true');
+    }
+
+    // Radius filter (miles)
+    if (filters.radius && filters.radius > 0) {
+      url.searchParams.set('radius', filters.radius.toString());
+    }
 
     const response = await fetch(url.toString(), {
       headers: {
@@ -29,7 +57,17 @@ async function searchJobs(query, page = 1) {
     }
 
     const data = await response.json();
-    return (data.data || []).map(normalizeJob);
+    let jobs = (data.data || []).map(normalizeJob);
+
+    // Filter by specific source/employer if requested
+    if (filters.source_filter) {
+      jobs = jobs.filter(j =>
+        (j.source_domain || '').includes(filters.source_filter) ||
+        (j.url || '').includes(filters.source_filter)
+      );
+    }
+
+    return jobs;
   } catch (err) {
     console.error(`Failed to search "${query}":`, err.message);
     return [];
@@ -37,6 +75,10 @@ async function searchJobs(query, page = 1) {
 }
 
 function normalizeJob(raw) {
+  const applyLink = raw.job_apply_link || raw.job_google_link || '';
+  let sourceDomain = '';
+  try { sourceDomain = new URL(applyLink).hostname; } catch(e) {}
+
   return {
     title: raw.job_title || '',
     company: raw.employer_name || '',
@@ -45,8 +87,11 @@ function normalizeJob(raw) {
       : raw.job_is_remote ? 'Remote' : 'Unknown',
     salary: formatSalary(raw),
     description: (raw.job_description || '').slice(0, 600),
-    url: raw.job_apply_link || raw.job_google_link || '',
-    source: 'jsearch',
+    url: applyLink,
+    source: raw.job_publisher || 'jsearch',
+    source_domain: sourceDomain,
+    remote: raw.job_is_remote || false,
+    employment_type: raw.job_employment_type || '',
     posted_date: raw.job_posted_at_datetime_utc || new Date().toISOString()
   };
 }
@@ -63,7 +108,7 @@ function formatSalary(raw) {
 
 /**
  * Build search queries dynamically from ALL user profiles.
- * Combines roles, top skills, and location preferences.
+ * Combines roles, skills, location preferences, and filters.
  * Deduplicates and limits to avoid API overuse.
  */
 export function buildSearchQueries(users) {
@@ -72,35 +117,61 @@ export function buildSearchQueries(users) {
   for (const user of users) {
     const roles = user.primary_roles || [];
     const locations = user.preferred_locations || [];
-    const remoteOk = ['remote', 'flexible'].includes(user.remote_preference);
+    const locType = user.location_type || 'any';
+    const remoteOk = locType === 'remote' || ['remote', 'flexible'].includes(user.remote_preference);
+    const schedule = user.work_schedule || 'full_time';
 
-    // Build queries from each role
+    // Schedule suffix for queries
+    const schedSuffix = schedule === 'part_time' ? ' part time' : schedule === 'contract' ? ' contract' : schedule === 'internship' ? ' internship' : '';
+
     for (const role of roles.slice(0, 3)) {
-      // Role + remote
-      if (remoteOk) {
-        querySet.add(`${role} remote`);
+      if (locType === 'remote' || remoteOk) {
+        querySet.add(`${role} remote${schedSuffix}`);
       }
 
-      // Role + each preferred location
-      for (const loc of locations.slice(0, 2)) {
-        querySet.add(`${role} ${loc}`);
+      if (locType !== 'remote') {
+        for (const loc of locations.slice(0, 2)) {
+          querySet.add(`${role} ${loc}${schedSuffix}`);
+        }
       }
 
-      // If no location preference and not remote, just search the role
       if (locations.length === 0 && !remoteOk) {
-        querySet.add(role);
+        querySet.add(`${role}${schedSuffix}`);
       }
     }
   }
 
-  // Cap at 15 queries to control API costs (free tier = 500/month)
   const queries = Array.from(querySet).slice(0, 15);
   console.log(`[JobSearch] Built ${queries.length} search queries from ${users.length} user profiles`);
   return queries;
 }
 
 /**
+ * Build API filter object from user preferences.
+ */
+function buildFilters(user) {
+  const filters = {};
+  const locType = user.location_type || 'any';
+  const schedule = user.work_schedule || 'full_time';
+
+  // Employment type mapping
+  const typeMap = { full_time: 'FULLTIME', part_time: 'PARTTIME', contract: 'CONTRACTOR', internship: 'INTERN' };
+  if (typeMap[schedule]) filters.employment_type = typeMap[schedule];
+
+  // Remote filter
+  if (locType === 'remote') filters.remote_only = true;
+
+  // Radius for local/hybrid
+  if ((locType === 'local' || locType === 'hybrid') && user.search_radius) {
+    filters.radius = user.search_radius;
+  }
+
+  return filters;
+}
+
+/**
  * Fetch all jobs using dynamically built queries.
+ * Respects user source preferences and filters.
  * Deduplicates by URL.
  */
 export async function fetchJobsForUsers(users) {
@@ -111,20 +182,46 @@ export async function fetchJobsForUsers(users) {
     return [];
   }
 
-  console.log(`[JobSearch] Searching: ${queries.join(' | ')}`);
+  // Get filters from first user (single-user system for now)
+  const filters = users.length > 0 ? buildFilters(users[0]) : {};
+
+  // Get source preferences
+  const user = users[0] || {};
+  const sources = user.job_sources || ['jsearch'];
+
+  console.log(`[JobSearch] Searching: ${queries.join(' | ')} | Filters: ${JSON.stringify(filters)} | Sources: ${sources}`);
 
   const allJobs = [];
   const seenUrls = new Set();
 
   for (const query of queries) {
-    const jobs = await searchJobs(query);
-    for (const job of jobs) {
-      if (job.url && !seenUrls.has(job.url)) {
-        seenUrls.add(job.url);
-        allJobs.push(job);
+    // If user selected specific sources (not jsearch-all), search with each source filter
+    if (sources.length > 0 && !sources.includes('jsearch')) {
+      for (const src of sources) {
+        const srcInfo = SOURCES[src];
+        const srcFilters = { ...filters };
+        if (srcInfo?.employer_filter) {
+          srcFilters.source_filter = srcInfo.employer_filter;
+        }
+        const jobs = await searchJobs(query, 1, srcFilters);
+        for (const job of jobs) {
+          if (job.url && !seenUrls.has(job.url)) {
+            seenUrls.add(job.url);
+            allJobs.push(job);
+          }
+        }
+        await new Promise(r => setTimeout(r, 300));
+      }
+    } else {
+      // Default: search all sources via JSearch
+      const jobs = await searchJobs(query, 1, filters);
+      for (const job of jobs) {
+        if (job.url && !seenUrls.has(job.url)) {
+          seenUrls.add(job.url);
+          allJobs.push(job);
+        }
       }
     }
-    // Rate limit between requests
     await new Promise(r => setTimeout(r, 500));
   }
 
