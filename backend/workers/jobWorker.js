@@ -1,35 +1,57 @@
 import supabase from '../utils/supabase.js';
-import { fetchAllJobs, generateSampleJobs } from '../services/jobSearch.js';
+import { fetchJobsForUsers, fetchAllJobs, generateSampleJobs } from '../services/jobSearch.js';
 import { matchJobsToUser } from '../services/matching.js';
 import { summarizeJobs } from '../services/ai.js';
 import { sendNotification } from '../services/notifications.js';
 import dotenv from 'dotenv';
 dotenv.config();
 
-const USE_SAMPLE_JOBS = process.env.NODE_ENV !== 'production' || !process.env.RAPIDAPI_KEY;
+const USE_SAMPLE_JOBS = !process.env.RAPIDAPI_KEY;
 
 export async function runJobWorker() {
   const startTime = Date.now();
   console.log('[Worker] ──────────── Starting pipeline ────────────');
 
-  // ── Step 1: Fetch jobs ──
-  console.log('[Worker] Step 1: Fetching jobs...');
+  // ── Step 1: Get all users with complete profiles ──
+  const { data: users, error: usersErr } = await supabase
+    .from('users')
+    .select('*')
+    .eq('profile_complete', true);
+
+  if (usersErr) {
+    console.error('[Worker] Failed to fetch users:', usersErr.message);
+    return { jobs: 0, users: 0, notifications: 0 };
+  }
+
+  if (!users || users.length === 0) {
+    console.log('[Worker] No users with complete profiles. Exiting.');
+    return { jobs: 0, users: 0, notifications: 0 };
+  }
+  console.log(`[Worker] Found ${users.length} users with complete profiles`);
+
+  // ── Step 2: Fetch jobs based on user profiles ──
+  console.log('[Worker] Step 2: Fetching jobs tailored to user profiles...');
   let jobs;
   try {
-    jobs = USE_SAMPLE_JOBS ? generateSampleJobs() : await fetchAllJobs();
+    if (USE_SAMPLE_JOBS) {
+      jobs = generateSampleJobs();
+    } else {
+      // Dynamic: build search queries from ALL user profiles
+      jobs = await fetchJobsForUsers(users);
+    }
   } catch (err) {
     console.error('[Worker] Failed to fetch jobs:', err.message);
-    jobs = generateSampleJobs(); // Fallback to sample
+    jobs = generateSampleJobs();
   }
   console.log(`[Worker] Fetched ${jobs.length} jobs`);
 
   if (jobs.length === 0) {
     console.log('[Worker] No jobs found. Exiting.');
-    return { jobs: 0, users: 0, notifications: 0 };
+    return { jobs: 0, users: users.length, notifications: 0 };
   }
 
-  // ── Step 2: Store jobs (filter out null URLs) ──
-  console.log('[Worker] Step 2: Storing jobs...');
+  // ── Step 3: Store jobs ──
+  console.log('[Worker] Step 3: Storing jobs...');
   let storedCount = 0;
   const validJobs = jobs.filter(j => j.url && j.url.length > 0);
 
@@ -49,29 +71,12 @@ export async function runJobWorker() {
         { onConflict: 'url', ignoreDuplicates: true }
       );
       if (!error) storedCount++;
-      else console.error(`[Worker] Store error for ${job.url}:`, error.message);
+      else console.error(`[Worker] Store error: ${error.message}`);
     } catch (err) {
       console.error(`[Worker] Store exception:`, err.message);
     }
   }
   console.log(`[Worker] Stored ${storedCount} new jobs`);
-
-  // ── Step 3: Get all users with complete profiles ──
-  const { data: users, error: usersErr } = await supabase
-    .from('users')
-    .select('*')
-    .eq('profile_complete', true);
-
-  if (usersErr) {
-    console.error('[Worker] Failed to fetch users:', usersErr.message);
-    return { jobs: storedCount, users: 0, notifications: 0 };
-  }
-
-  if (!users || users.length === 0) {
-    console.log('[Worker] No users with complete profiles. Exiting.');
-    return { jobs: storedCount, users: 0, notifications: 0 };
-  }
-  console.log(`[Worker] Processing ${users.length} users`);
 
   // ── Step 4: Fetch recent jobs from DB for matching ──
   const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
@@ -80,7 +85,7 @@ export async function runJobWorker() {
     .select('*')
     .gte('created_at', oneDayAgo)
     .order('created_at', { ascending: false })
-    .limit(200);
+    .limit(500);
 
   if (jobsErr) {
     console.error('[Worker] Failed to fetch recent jobs:', jobsErr.message);
@@ -88,7 +93,7 @@ export async function runJobWorker() {
   }
 
   const jobPool = recentJobs || [];
-  console.log(`[Worker] ${jobPool.length} recent jobs in pool`);
+  console.log(`[Worker] ${jobPool.length} recent jobs in matching pool`);
 
   // ── Step 5: Match & Notify each user ──
   let notificationCount = 0;
@@ -96,13 +101,19 @@ export async function runJobWorker() {
   for (const user of users) {
     try {
       console.log(`[Worker] Matching for user: ${user.email}`);
+      console.log(`[Worker]   Roles: ${(user.primary_roles || []).join(', ')}`);
+      console.log(`[Worker]   Skills: ${(user.skills || []).slice(0, 5).join(', ')}...`);
 
       const matches = matchJobsToUser(user, jobPool);
       console.log(`[Worker]   → ${matches.length} matches (score ≥ 70)`);
 
+      if (matches.length > 0) {
+        matches.forEach(m => console.log(`[Worker]     ${m.score}pts: ${m.job.title} @ ${m.job.company}`));
+      }
+
       if (matches.length === 0) continue;
 
-      // Check if already notified
+      // Check if already sent
       const jobIds = matches.map(m => m.job.id).filter(Boolean);
       if (jobIds.length === 0) continue;
 
@@ -129,18 +140,15 @@ export async function runJobWorker() {
         const result = await summarizeJobs(topJobs);
         summaries = result.jobs || result;
       } catch (aiErr) {
-        console.error(`[Worker]   → AI summarization failed:`, aiErr.message);
-        // Fallback: use job descriptions as summaries
+        console.error(`[Worker]   → AI failed:`, aiErr.message);
         summaries = newMatches.map(m => ({
-          title: m.job.title,
-          company: m.job.company,
-          location: m.job.location,
-          salary: m.job.salary || 'Not listed',
+          title: m.job.title, company: m.job.company,
+          location: m.job.location, salary: m.job.salary || 'Not listed',
           summary: (m.job.description || '').slice(0, 100)
         }));
       }
 
-      // Store matches in DB
+      // Store matches
       for (let i = 0; i < newMatches.length; i++) {
         try {
           await supabase.from('matches').upsert({
@@ -151,7 +159,7 @@ export async function runJobWorker() {
             sent: true
           }, { onConflict: 'user_id,job_id' });
         } catch (err) {
-          console.error(`[Worker]   → Failed to store match:`, err.message);
+          console.error(`[Worker]   → Match store error:`, err.message);
         }
       }
 
@@ -159,7 +167,6 @@ export async function runJobWorker() {
       console.log(`[Worker]   → Sending notification...`);
       const result = await sendNotification(user, summaries);
 
-      // Log notification
       try {
         await supabase.from('notification_log').insert({
           user_id: user.id,
@@ -169,7 +176,7 @@ export async function runJobWorker() {
           error: result.error || null
         });
       } catch (err) {
-        console.error(`[Worker]   → Failed to log notification:`, err.message);
+        console.error(`[Worker]   → Log error:`, err.message);
       }
 
       if (result.success) notificationCount++;
@@ -183,12 +190,7 @@ export async function runJobWorker() {
   console.log(`[Worker] ──────────── Complete ────────────`);
   console.log(`[Worker] Jobs: ${storedCount} | Users: ${users.length} | Sent: ${notificationCount} | Time: ${elapsed}s`);
 
-  return {
-    jobs: storedCount,
-    users: users.length,
-    notifications: notificationCount,
-    elapsed: `${elapsed}s`
-  };
+  return { jobs: storedCount, users: users.length, notifications: notificationCount, elapsed: `${elapsed}s` };
 }
 
 if (process.argv[1]?.endsWith('jobWorker.js')) {

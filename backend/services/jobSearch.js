@@ -4,20 +4,6 @@ dotenv.config();
 const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY;
 const JSEARCH_HOST = 'jsearch.p.rapidapi.com';
 
-// ============================================
-// SEARCH CLUSTERS – configurable job searches
-// ============================================
-const SEARCH_CLUSTERS = [
-  'software engineer remote',
-  'product manager remote',
-  'data analyst remote',
-  'marketing manager remote',
-  'UX designer remote',
-  'data engineer remote',
-  'devops engineer remote',
-  'project manager remote'
-];
-
 /**
  * Fetch jobs from JSearch API (RapidAPI)
  * Filters to last 24 hours only
@@ -28,7 +14,7 @@ async function searchJobs(query, page = 1) {
     url.searchParams.set('query', query);
     url.searchParams.set('page', page.toString());
     url.searchParams.set('num_pages', '1');
-    url.searchParams.set('date_posted', 'today'); // Last 24 hours
+    url.searchParams.set('date_posted', 'today');
 
     const response = await fetch(url.toString(), {
       headers: {
@@ -50,9 +36,6 @@ async function searchJobs(query, page = 1) {
   }
 }
 
-/**
- * Normalize JSearch API response to our schema
- */
 function normalizeJob(raw) {
   return {
     title: raw.job_title || '',
@@ -79,15 +62,61 @@ function formatSalary(raw) {
 }
 
 /**
- * Fetch all jobs across all search clusters
- * Deduplicates by URL
+ * Build search queries dynamically from ALL user profiles.
+ * Combines roles, top skills, and location preferences.
+ * Deduplicates and limits to avoid API overuse.
  */
-export async function fetchAllJobs() {
-  console.log(`[JobSearch] Fetching from ${SEARCH_CLUSTERS.length} clusters...`);
+export function buildSearchQueries(users) {
+  const querySet = new Set();
+
+  for (const user of users) {
+    const roles = user.primary_roles || [];
+    const locations = user.preferred_locations || [];
+    const remoteOk = ['remote', 'flexible'].includes(user.remote_preference);
+
+    // Build queries from each role
+    for (const role of roles.slice(0, 3)) {
+      // Role + remote
+      if (remoteOk) {
+        querySet.add(`${role} remote`);
+      }
+
+      // Role + each preferred location
+      for (const loc of locations.slice(0, 2)) {
+        querySet.add(`${role} ${loc}`);
+      }
+
+      // If no location preference and not remote, just search the role
+      if (locations.length === 0 && !remoteOk) {
+        querySet.add(role);
+      }
+    }
+  }
+
+  // Cap at 15 queries to control API costs (free tier = 500/month)
+  const queries = Array.from(querySet).slice(0, 15);
+  console.log(`[JobSearch] Built ${queries.length} search queries from ${users.length} user profiles`);
+  return queries;
+}
+
+/**
+ * Fetch all jobs using dynamically built queries.
+ * Deduplicates by URL.
+ */
+export async function fetchJobsForUsers(users) {
+  const queries = buildSearchQueries(users);
+
+  if (queries.length === 0) {
+    console.log('[JobSearch] No search queries generated. Check user profiles.');
+    return [];
+  }
+
+  console.log(`[JobSearch] Searching: ${queries.join(' | ')}`);
+
   const allJobs = [];
   const seenUrls = new Set();
 
-  for (const query of SEARCH_CLUSTERS) {
+  for (const query of queries) {
     const jobs = await searchJobs(query);
     for (const job of jobs) {
       if (job.url && !seenUrls.has(job.url)) {
@@ -95,7 +124,37 @@ export async function fetchAllJobs() {
         allJobs.push(job);
       }
     }
-    // Rate limit: small delay between requests
+    // Rate limit between requests
+    await new Promise(r => setTimeout(r, 500));
+  }
+
+  console.log(`[JobSearch] Found ${allJobs.length} unique jobs from ${queries.length} searches`);
+  return allJobs;
+}
+
+/**
+ * Legacy: fetch with static clusters (fallback)
+ */
+export async function fetchAllJobs() {
+  const FALLBACK_CLUSTERS = [
+    'software engineer remote',
+    'web developer remote',
+    'data analyst remote',
+    'project manager remote'
+  ];
+
+  console.log(`[JobSearch] Using fallback clusters...`);
+  const allJobs = [];
+  const seenUrls = new Set();
+
+  for (const query of FALLBACK_CLUSTERS) {
+    const jobs = await searchJobs(query);
+    for (const job of jobs) {
+      if (job.url && !seenUrls.has(job.url)) {
+        seenUrls.add(job.url);
+        allJobs.push(job);
+      }
+    }
     await new Promise(r => setTimeout(r, 500));
   }
 
@@ -104,89 +163,14 @@ export async function fetchAllJobs() {
 }
 
 /**
- * For development/testing: generate sample jobs
+ * Sample jobs for dev/testing
  */
 export function generateSampleJobs() {
   return [
-    {
-      title: 'Senior Backend Engineer',
-      company: 'TechFlow AI',
-      location: 'Remote',
-      salary: '$140k–$180k',
-      description: 'Building scalable AI infrastructure with Python, FastAPI, and AWS. Experience with LLMs and vector databases preferred. Team of 12 engineers.',
-      url: 'https://example.com/job/1',
-      source: 'sample',
-      posted_date: new Date().toISOString()
-    },
-    {
-      title: 'Product Manager – Platform',
-      company: 'FinanceOS',
-      location: 'San Francisco, CA',
-      salary: '$155k–$185k',
-      description: 'Lead product strategy for our core fintech platform. SaaS B2B experience required. Work closely with engineering and design to ship quarterly releases.',
-      url: 'https://example.com/job/2',
-      source: 'sample',
-      posted_date: new Date().toISOString()
-    },
-    {
-      title: 'Data Analyst',
-      company: 'HealthMetrics',
-      location: 'Remote',
-      salary: '$95k–$120k',
-      description: 'Analyze healthcare data using SQL and Python. Build dashboards in Looker. Support clinical operations team with data-driven insights.',
-      url: 'https://example.com/job/3',
-      source: 'sample',
-      posted_date: new Date().toISOString()
-    },
-    {
-      title: 'Full Stack Developer',
-      company: 'CreatorStack',
-      location: 'Austin, TX',
-      salary: '$130k–$160k',
-      description: 'React, Node.js, PostgreSQL. Building tools for content creators. Remote-friendly with Austin HQ. Series A startup, fast-paced environment.',
-      url: 'https://example.com/job/4',
-      source: 'sample',
-      posted_date: new Date().toISOString()
-    },
-    {
-      title: 'Marketing Manager – Growth',
-      company: 'ScaleUp',
-      location: 'Remote',
-      salary: '$110k–$140k',
-      description: 'Own growth marketing strategy including paid acquisition, SEO, and content. Experience with B2B SaaS required. HubSpot and analytics tools.',
-      url: 'https://example.com/job/5',
-      source: 'sample',
-      posted_date: new Date().toISOString()
-    },
-    {
-      title: 'DevOps Engineer',
-      company: 'CloudNine',
-      location: 'Remote',
-      salary: '$135k–$165k',
-      description: 'Kubernetes, Terraform, CI/CD pipelines. AWS or GCP experience required. On-call rotation with team of 6. Infrastructure as code focus.',
-      url: 'https://example.com/job/6',
-      source: 'sample',
-      posted_date: new Date().toISOString()
-    },
-    {
-      title: 'UX Designer – Mobile',
-      company: 'AppWorks',
-      location: 'New York, NY',
-      salary: '$120k–$150k',
-      description: 'Design mobile experiences for iOS and Android. Figma proficiency required. User research and prototyping. Consumer fintech product.',
-      url: 'https://example.com/job/7',
-      source: 'sample',
-      posted_date: new Date().toISOString()
-    },
-    {
-      title: 'Data Engineer',
-      company: 'Analytiq',
-      location: 'Remote',
-      salary: '$140k–$170k',
-      description: 'Build data pipelines with Spark, Airflow, and dbt. Strong SQL required. Support analytics and ML teams. Modern data stack environment.',
-      url: 'https://example.com/job/8',
-      source: 'sample',
-      posted_date: new Date().toISOString()
-    }
+    { title: 'Senior Frontend Developer', company: 'TechCo', location: 'Remote', salary: '$120k–$160k', description: 'Build modern web apps with React, TypeScript, and Node.js. Design system experience preferred.', url: 'https://example.com/job/fe-1', source: 'sample', posted_date: new Date().toISOString() },
+    { title: 'Full Stack Engineer', company: 'StartupAI', location: 'Remote', salary: '$130k–$170k', description: 'Python, React, PostgreSQL. Building AI-powered SaaS platform. AWS experience required.', url: 'https://example.com/job/fs-1', source: 'sample', posted_date: new Date().toISOString() },
+    { title: 'Backend Engineer', company: 'FinanceOS', location: 'San Francisco, CA', salary: '$150k–$190k', description: 'Node.js, PostgreSQL, Redis. Build scalable fintech APIs. Microservices architecture.', url: 'https://example.com/job/be-1', source: 'sample', posted_date: new Date().toISOString() },
+    { title: 'Data Analyst', company: 'HealthMetrics', location: 'Remote', salary: '$95k–$120k', description: 'SQL, Python, Looker. Healthcare analytics dashboards. Support clinical operations team.', url: 'https://example.com/job/da-1', source: 'sample', posted_date: new Date().toISOString() },
+    { title: 'Product Manager', company: 'ScaleUp', location: 'Remote', salary: '$140k–$175k', description: 'B2B SaaS product strategy. Work with engineering and design. Agile experience required.', url: 'https://example.com/job/pm-1', source: 'sample', posted_date: new Date().toISOString() },
   ];
 }
