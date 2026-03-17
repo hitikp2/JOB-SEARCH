@@ -8,21 +8,19 @@ dotenv.config();
 
 const USE_SAMPLE_JOBS = process.env.NODE_ENV !== 'production' || !process.env.RAPIDAPI_KEY;
 
-/**
- * Main worker pipeline:
- * 1. Fetch new jobs
- * 2. Store in database
- * 3. Match jobs to each user
- * 4. AI summarize top matches
- * 5. Send notifications
- */
 export async function runJobWorker() {
   const startTime = Date.now();
   console.log('[Worker] ──────────── Starting pipeline ────────────');
 
   // ── Step 1: Fetch jobs ──
   console.log('[Worker] Step 1: Fetching jobs...');
-  const jobs = USE_SAMPLE_JOBS ? generateSampleJobs() : await fetchAllJobs();
+  let jobs;
+  try {
+    jobs = USE_SAMPLE_JOBS ? generateSampleJobs() : await fetchAllJobs();
+  } catch (err) {
+    console.error('[Worker] Failed to fetch jobs:', err.message);
+    jobs = generateSampleJobs(); // Fallback to sample
+  }
   console.log(`[Worker] Fetched ${jobs.length} jobs`);
 
   if (jobs.length === 0) {
@@ -30,24 +28,31 @@ export async function runJobWorker() {
     return { jobs: 0, users: 0, notifications: 0 };
   }
 
-  // ── Step 2: Store jobs ──
+  // ── Step 2: Store jobs (filter out null URLs) ──
   console.log('[Worker] Step 2: Storing jobs...');
   let storedCount = 0;
-  for (const job of jobs) {
-    const { error } = await supabase.from('jobs').upsert(
-      {
-        title: job.title,
-        company: job.company,
-        location: job.location,
-        salary: job.salary,
-        description: job.description,
-        url: job.url,
-        source: job.source,
-        posted_date: job.posted_date
-      },
-      { onConflict: 'url', ignoreDuplicates: true }
-    );
-    if (!error) storedCount++;
+  const validJobs = jobs.filter(j => j.url && j.url.length > 0);
+
+  for (const job of validJobs) {
+    try {
+      const { error } = await supabase.from('jobs').upsert(
+        {
+          title: job.title,
+          company: job.company,
+          location: job.location,
+          salary: job.salary,
+          description: (job.description || '').slice(0, 600),
+          url: job.url,
+          source: job.source,
+          posted_date: job.posted_date
+        },
+        { onConflict: 'url', ignoreDuplicates: true }
+      );
+      if (!error) storedCount++;
+      else console.error(`[Worker] Store error for ${job.url}:`, error.message);
+    } catch (err) {
+      console.error(`[Worker] Store exception:`, err.message);
+    }
   }
   console.log(`[Worker] Stored ${storedCount} new jobs`);
 
@@ -57,7 +62,12 @@ export async function runJobWorker() {
     .select('*')
     .eq('profile_complete', true);
 
-  if (usersErr || !users || users.length === 0) {
+  if (usersErr) {
+    console.error('[Worker] Failed to fetch users:', usersErr.message);
+    return { jobs: storedCount, users: 0, notifications: 0 };
+  }
+
+  if (!users || users.length === 0) {
     console.log('[Worker] No users with complete profiles. Exiting.');
     return { jobs: storedCount, users: 0, notifications: 0 };
   }
@@ -65,12 +75,17 @@ export async function runJobWorker() {
 
   // ── Step 4: Fetch recent jobs from DB for matching ──
   const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-  const { data: recentJobs } = await supabase
+  const { data: recentJobs, error: jobsErr } = await supabase
     .from('jobs')
     .select('*')
     .gte('created_at', oneDayAgo)
     .order('created_at', { ascending: false })
     .limit(200);
+
+  if (jobsErr) {
+    console.error('[Worker] Failed to fetch recent jobs:', jobsErr.message);
+    return { jobs: storedCount, users: users.length, notifications: 0 };
+  }
 
   const jobPool = recentJobs || [];
   console.log(`[Worker] ${jobPool.length} recent jobs in pool`);
@@ -82,14 +97,15 @@ export async function runJobWorker() {
     try {
       console.log(`[Worker] Matching for user: ${user.email}`);
 
-      // Match using algorithm (no AI)
       const matches = matchJobsToUser(user, jobPool);
       console.log(`[Worker]   → ${matches.length} matches (score ≥ 70)`);
 
       if (matches.length === 0) continue;
 
-      // Check if we already notified about these jobs today
-      const jobIds = matches.map(m => m.job.id);
+      // Check if already notified
+      const jobIds = matches.map(m => m.job.id).filter(Boolean);
+      if (jobIds.length === 0) continue;
+
       const { data: existing } = await supabase
         .from('matches')
         .select('job_id')
@@ -98,27 +114,45 @@ export async function runJobWorker() {
         .eq('sent', true);
 
       const alreadySent = new Set((existing || []).map(e => e.job_id));
-      const newMatches = matches.filter(m => !alreadySent.has(m.job.id));
+      const newMatches = matches.filter(m => m.job.id && !alreadySent.has(m.job.id));
 
       if (newMatches.length === 0) {
         console.log(`[Worker]   → All matches already sent. Skipping.`);
         continue;
       }
 
-      // AI summarization (only for new matches, 3-5 jobs max)
+      // AI summarization
       console.log(`[Worker]   → Summarizing ${newMatches.length} jobs with AI...`);
-      const topJobs = newMatches.map(m => m.job);
-      const { jobs: summaries } = await summarizeJobs(topJobs);
+      let summaries;
+      try {
+        const topJobs = newMatches.map(m => m.job);
+        const result = await summarizeJobs(topJobs);
+        summaries = result.jobs || result;
+      } catch (aiErr) {
+        console.error(`[Worker]   → AI summarization failed:`, aiErr.message);
+        // Fallback: use job descriptions as summaries
+        summaries = newMatches.map(m => ({
+          title: m.job.title,
+          company: m.job.company,
+          location: m.job.location,
+          salary: m.job.salary || 'Not listed',
+          summary: (m.job.description || '').slice(0, 100)
+        }));
+      }
 
       // Store matches in DB
       for (let i = 0; i < newMatches.length; i++) {
-        await supabase.from('matches').upsert({
-          user_id: user.id,
-          job_id: newMatches[i].job.id,
-          score: newMatches[i].score,
-          ai_summary: summaries[i]?.summary || '',
-          sent: true
-        }, { onConflict: 'user_id,job_id' });
+        try {
+          await supabase.from('matches').upsert({
+            user_id: user.id,
+            job_id: newMatches[i].job.id,
+            score: newMatches[i].score,
+            ai_summary: summaries[i]?.summary || '',
+            sent: true
+          }, { onConflict: 'user_id,job_id' });
+        } catch (err) {
+          console.error(`[Worker]   → Failed to store match:`, err.message);
+        }
       }
 
       // Send notification
@@ -126,13 +160,17 @@ export async function runJobWorker() {
       const result = await sendNotification(user, summaries);
 
       // Log notification
-      await supabase.from('notification_log').insert({
-        user_id: user.id,
-        method: user.notification_method || 'email',
-        match_count: summaries.length,
-        status: result.success ? 'sent' : 'failed',
-        error: result.error || null
-      });
+      try {
+        await supabase.from('notification_log').insert({
+          user_id: user.id,
+          method: user.notification_method || 'email',
+          match_count: summaries.length,
+          status: result.success ? 'sent' : 'failed',
+          error: result.error || null
+        });
+      } catch (err) {
+        console.error(`[Worker]   → Failed to log notification:`, err.message);
+      }
 
       if (result.success) notificationCount++;
 
@@ -153,7 +191,6 @@ export async function runJobWorker() {
   };
 }
 
-// Allow direct execution: node workers/jobWorker.js
 if (process.argv[1]?.endsWith('jobWorker.js')) {
   runJobWorker()
     .then(r => { console.log('Result:', r); process.exit(0); })
