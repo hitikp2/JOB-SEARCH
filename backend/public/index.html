@@ -361,6 +361,219 @@
       );
     }
 
+    // ── PROFILE TAB ──
+    function ProfileTab({ profile, setProfile, showReupload, setShowReupload, loadData }) {
+      const [editing, setEditing] = useState(null);
+      const [salaryMin, setSalaryMin] = useState('');
+      const [salaryMax, setSalaryMax] = useState('');
+      const [locInput, setLocInput] = useState('');
+      const [roleInput, setRoleInput] = useState('');
+      const [skillInput, setSkillInput] = useState('');
+
+      // Parse existing salary on mount
+      useEffect(() => {
+        const s = profile?.salary_expectation || '';
+        const m = s.match(/\$?([\d]+)k?\s*[-–—to]+\s*\$?([\d]+)k?/i);
+        if (m) { setSalaryMin(m[1]); setSalaryMax(m[2]); }
+        else if (s) { setSalaryMin(s.replace(/[^0-9]/g,'')); }
+      }, [profile?.salary_expectation]);
+
+      const savePref = async (key, val) => {
+        await api('/profile', { method:'PATCH', body:{ [key]: val } }).catch(()=>{});
+        setProfile(p => ({...p, [key]: val}));
+      };
+
+      const saveSalary = () => {
+        const min = salaryMin.trim();
+        const max = salaryMax.trim();
+        let val = '';
+        if (min && max) val = `$${min}k–$${max}k`;
+        else if (min) val = `$${min}k+`;
+        savePref('salary_expectation', val);
+        setEditing(null);
+      };
+
+      const addLocation = () => {
+        if (!locInput.trim()) return;
+        const locs = [...(profile?.preferred_locations||[]), locInput.trim()];
+        savePref('preferred_locations', locs);
+        setLocInput('');
+      };
+
+      const removeLocation = (i) => {
+        const locs = (profile?.preferred_locations||[]).filter((_,idx) => idx !== i);
+        savePref('preferred_locations', locs);
+      };
+
+      const addRole = () => {
+        if (!roleInput.trim()) return;
+        const roles = [...(profile?.primary_roles||[]), roleInput.trim()];
+        savePref('primary_roles', roles);
+        setRoleInput('');
+      };
+
+      const removeRole = (i) => {
+        const roles = (profile?.primary_roles||[]).filter((_,idx) => idx !== i);
+        savePref('primary_roles', roles);
+      };
+
+      const addSkill = () => {
+        if (!skillInput.trim()) return;
+        const skills = [...(profile?.skills||[]), skillInput.trim()];
+        savePref('skills', skills);
+        setSkillInput('');
+      };
+
+      const removeSkill = (i) => {
+        const skills = (profile?.skills||[]).filter((_,idx) => idx !== i);
+        savePref('skills', skills);
+      };
+
+      const RemovableTag = ({ children, onRemove, color = '#a78bfa' }) => (
+        <span style={{ display:'inline-flex', alignItems:'center', gap:4, padding:'5px 10px', background:color+'15', border:'1px solid '+color+'30', borderRadius:8, fontSize:12, color }}>
+          {children}
+          <button onClick={onRemove} style={{ background:'none', border:'none', color:'#ef4444', cursor:'pointer', fontSize:14, padding:0, lineHeight:1 }}>×</button>
+        </span>
+      );
+
+      const SectionLabel = ({ children }) => (
+        <div style={{ fontSize:10, color:'var(--text-dim)', fontWeight:600, textTransform:'uppercase', letterSpacing:1, marginBottom:8 }}>{children}</div>
+      );
+
+      return (
+        <div>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:18 }}>
+            <h2 style={{ margin:0, fontSize:18, fontWeight:600 }}>Your Profile</h2>
+            <button onClick={()=>setShowReupload(!showReupload)} className="btn" style={{ display:'flex', alignItems:'center', gap:6, padding:'8px 16px', background:showReupload?'var(--accent-soft)':'transparent', border:'1px solid '+(showReupload?'var(--accent-glow)':'var(--border)'), borderRadius:8, color:showReupload?'var(--accent)':'var(--text-muted)', fontSize:12 }}>
+              {showReupload ? 'Hide Upload' : 'Re-upload Resume'}
+            </button>
+          </div>
+
+          {showReupload && (
+            <div className="card" style={{ borderRadius:18, marginBottom:20, padding:28 }}>
+              <ResumeUpload embedded onComplete={()=>{setShowReupload(false);loadData();}} />
+            </div>
+          )}
+
+          {/* Header card */}
+          <div className="card" style={{ borderRadius:18, position:'relative', overflow:'hidden', marginBottom:20 }}>
+            <div style={{ position:'absolute', top:0, left:0, right:0, height:3, background:'linear-gradient(90deg,#a78bfa,#34d399,#60a5fa)' }} />
+            <div style={{ display:'flex', alignItems:'center', gap:16, marginBottom:16 }}>
+              <div style={{ width:50, height:50, borderRadius:14, display:'flex', alignItems:'center', justifyContent:'center', fontSize:20, fontWeight:700, background:'linear-gradient(135deg,#a78bfa20,#34d39920)', border:'1px solid #a78bfa25', color:'var(--accent)' }}>{(profile.email||'?')[0].toUpperCase()}</div>
+              <div>
+                <div style={{ fontSize:18, fontWeight:700 }}>{profile.email}</div>
+                <div style={{ fontSize:13, color:'var(--text-dim)', marginTop:2 }}>
+                  {profile.seniority_level||'—'} · {profile.years_experience||0} yrs
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Target Roles */}
+          <div className="card" style={{ borderRadius:18, marginBottom:20 }}>
+            <SectionLabel>Target Roles</SectionLabel>
+            <div style={{ display:'flex', flexWrap:'wrap', gap:6, marginBottom:10 }}>
+              {(profile.primary_roles||[]).map((r,i) => <RemovableTag key={r+i} onRemove={()=>removeRole(i)}>{r}</RemovableTag>)}
+              {(!profile.primary_roles||profile.primary_roles.length===0) && <span style={{ fontSize:12, color:'var(--text-dim)' }}>No roles added yet</span>}
+            </div>
+            <div style={{ display:'flex', gap:8 }}>
+              <input className="input" placeholder="e.g. Frontend Developer" value={roleInput} onChange={e=>setRoleInput(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')addRole();}} style={{ flex:1 }} />
+              <button onClick={addRole} className="btn" style={{ padding:'8px 16px', background:'#a78bfa18', color:'#a78bfa', border:'1px solid #a78bfa40', borderRadius:8, fontSize:12 }}>Add</button>
+            </div>
+          </div>
+
+          {/* Skills */}
+          <div className="card" style={{ borderRadius:18, marginBottom:20 }}>
+            <SectionLabel>Skills</SectionLabel>
+            <div style={{ display:'flex', flexWrap:'wrap', gap:6, marginBottom:10 }}>
+              {(profile.skills||[]).map((s,i) => <RemovableTag key={s+i} color="#34d399" onRemove={()=>removeSkill(i)}>{s}</RemovableTag>)}
+              {(!profile.skills||profile.skills.length===0) && <span style={{ fontSize:12, color:'var(--text-dim)' }}>No skills added yet</span>}
+            </div>
+            <div style={{ display:'flex', gap:8 }}>
+              <input className="input" placeholder="e.g. React, Python, SQL" value={skillInput} onChange={e=>setSkillInput(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')addSkill();}} style={{ flex:1 }} />
+              <button onClick={addSkill} className="btn" style={{ padding:'8px 16px', background:'#34d39918', color:'#34d399', border:'1px solid #34d39940', borderRadius:8, fontSize:12 }}>Add</button>
+            </div>
+          </div>
+
+          {/* Salary Range */}
+          <div className="card" style={{ borderRadius:18, marginBottom:20 }}>
+            <SectionLabel>Preferred Salary Range</SectionLabel>
+            {editing === 'salary' ? (
+              <div>
+                <div style={{ display:'flex', gap:8, alignItems:'center', marginBottom:10 }}>
+                  <span style={{ color:'var(--text-dim)', fontSize:14 }}>$</span>
+                  <input className="input" type="number" placeholder="Min (e.g. 80)" value={salaryMin} onChange={e=>setSalaryMin(e.target.value)} style={{ width:100, textAlign:'center' }} />
+                  <span style={{ color:'var(--text-dim)', fontSize:12 }}>k</span>
+                  <span style={{ color:'var(--text-dim)', fontSize:14 }}>—</span>
+                  <span style={{ color:'var(--text-dim)', fontSize:14 }}>$</span>
+                  <input className="input" type="number" placeholder="Max (e.g. 120)" value={salaryMax} onChange={e=>setSalaryMax(e.target.value)} style={{ width:100, textAlign:'center' }} />
+                  <span style={{ color:'var(--text-dim)', fontSize:12 }}>k</span>
+                </div>
+                <div style={{ display:'flex', gap:8 }}>
+                  <button onClick={saveSalary} className="btn" style={{ padding:'8px 18px', background:'#a78bfa18', color:'#a78bfa', border:'1px solid #a78bfa40', borderRadius:8, fontSize:12 }}>Save</button>
+                  <button onClick={()=>setEditing(null)} className="btn" style={{ padding:'8px 18px', background:'transparent', color:'var(--text-dim)', border:'1px solid var(--border)', borderRadius:8, fontSize:12 }}>Cancel</button>
+                </div>
+              </div>
+            ) : (
+              <div style={{ display:'flex', alignItems:'center', gap:12 }}>
+                <div style={{ fontSize:16, fontWeight:600, color: profile.salary_expectation ? 'var(--text)' : 'var(--text-dim)' }}>
+                  {profile.salary_expectation || 'Not set'}
+                </div>
+                <button onClick={()=>setEditing('salary')} className="btn" style={{ padding:'6px 14px', background:'transparent', color:'#60a5fa', border:'1px solid #60a5fa40', borderRadius:8, fontSize:11 }}>Edit</button>
+              </div>
+            )}
+            <p style={{ fontSize:11, color:'var(--text-dim)', marginTop:8, marginBottom:0 }}>Optional — helps match you to jobs in your desired pay range.</p>
+          </div>
+
+          {/* Preferred Locations */}
+          <div className="card" style={{ borderRadius:18, marginBottom:20 }}>
+            <SectionLabel>Preferred Locations</SectionLabel>
+            <div style={{ display:'flex', flexWrap:'wrap', gap:6, marginBottom:10 }}>
+              {(profile.preferred_locations||[]).map((loc,i) => <RemovableTag key={loc+i} color="#60a5fa" onRemove={()=>removeLocation(i)}>{loc}</RemovableTag>)}
+              {(!profile.preferred_locations||profile.preferred_locations.length===0) && <span style={{ fontSize:12, color:'var(--text-dim)' }}>No locations added — add cities or regions you'd work in</span>}
+            </div>
+            <div style={{ display:'flex', gap:8, marginBottom:12 }}>
+              <input className="input" placeholder="e.g. New York, Austin TX, Bay Area" value={locInput} onChange={e=>setLocInput(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')addLocation();}} style={{ flex:1 }} />
+              <button onClick={addLocation} className="btn" style={{ padding:'8px 16px', background:'#60a5fa18', color:'#60a5fa', border:'1px solid #60a5fa40', borderRadius:8, fontSize:12 }}>Add</button>
+            </div>
+
+            <SectionLabel>Location Type</SectionLabel>
+            <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+              {[{id:'any',l:'Any'},{id:'remote',l:'Remote'},{id:'local',l:'On-site'},{id:'hybrid',l:'Hybrid'}].map(t => (
+                <button key={t.id} onClick={()=>savePref('location_type',t.id)} className="btn" style={{ padding:'8px 16px', borderRadius:10, fontSize:12, background:(profile?.location_type||'any')===t.id?'#34d39918':'transparent', color:(profile?.location_type||'any')===t.id?'#34d399':'var(--text-dim)', border:'1px solid '+((profile?.location_type||'any')===t.id?'#34d39950':'var(--border)'), fontWeight:(profile?.location_type||'any')===t.id?600:400 }}>{t.l}</button>
+              ))}
+            </div>
+          </div>
+
+          {/* Remote Preference & Other Info */}
+          <div className="card" style={{ borderRadius:18 }}>
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16 }}>
+              <div>
+                <SectionLabel>Remote Preference</SectionLabel>
+                <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
+                  {['remote','hybrid','onsite','flexible'].map(r => (
+                    <button key={r} onClick={()=>savePref('remote_preference',r)} className="btn" style={{ padding:'6px 12px', borderRadius:8, fontSize:11, textTransform:'capitalize', background:profile?.remote_preference===r?'#a78bfa18':'transparent', color:profile?.remote_preference===r?'#a78bfa':'var(--text-dim)', border:'1px solid '+(profile?.remote_preference===r?'#a78bfa40':'var(--border)') }}>{r}</button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <SectionLabel>Notifications</SectionLabel>
+                <div style={{ fontSize:13, color:'var(--text)' }}>{profile.notification_method || '—'}</div>
+              </div>
+              <div>
+                <SectionLabel>Industries</SectionLabel>
+                <div style={{ fontSize:13, color:'var(--text)' }}>{(profile.industries||[]).join(', ') || '—'}</div>
+              </div>
+              <div>
+                <SectionLabel>Seniority</SectionLabel>
+                <div style={{ fontSize:13, color:'var(--text)' }}>{profile.seniority_level || '—'} · {profile.years_experience||0} yrs</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     // ── SETTINGS TAB ──
     function SettingsTab({ profile, setProfile, smsTestLoading, smsTestResult, handleSmsTest }) {
       const [phoneEdit, setPhoneEdit] = useState(profile?.phone || '');
@@ -907,35 +1120,7 @@
             {showAddJob && <AddJobModal onClose={()=>setShowAddJob(false)} onAdded={()=>{setShowAddJob(false);loadData();}} />}
 
             {/* PROFILE TAB */}
-            {tab==='profile' && profile && <div>
-              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:18 }}>
-                <h2 style={{ margin:0, fontSize:18, fontWeight:600 }}>Your Profile</h2>
-                <button onClick={()=>setShowReupload(!showReupload)} className="btn" style={{ display:'flex', alignItems:'center', gap:6, padding:'8px 16px', background:showReupload?'var(--accent-soft)':'transparent', border:'1px solid '+(showReupload?'var(--accent-glow)':'var(--border)'), borderRadius:8, color:showReupload?'var(--accent)':'var(--text-muted)', fontSize:12 }}>
-                  📄 {showReupload ? 'Hide Upload' : 'Re-upload Resume'}
-                </button>
-              </div>
-
-              {showReupload && (
-                <div className="card" style={{ borderRadius:18, marginBottom:20, padding:28 }}>
-                  <ResumeUpload embedded onComplete={()=>{setShowReupload(false);loadData();}} />
-                </div>
-              )}
-
-              <div className="card" style={{ borderRadius:18, position:'relative', overflow:'hidden' }}>
-                <div style={{ position:'absolute', top:0, left:0, right:0, height:3, background:'linear-gradient(90deg,#a78bfa,#34d399,#60a5fa)' }} />
-                <div style={{ display:'flex', alignItems:'center', gap:16, marginBottom:24 }}>
-                  <div style={{ width:50, height:50, borderRadius:14, display:'flex', alignItems:'center', justifyContent:'center', fontSize:20, fontWeight:700, background:'linear-gradient(135deg,#a78bfa20,#34d39920)', border:'1px solid #a78bfa25', color:'var(--accent)' }}>{(profile.email||'?')[0].toUpperCase()}</div>
-                  <div><div style={{ fontSize:18, fontWeight:700 }}>{profile.email}</div><div style={{ fontSize:13, color:'var(--text-dim)', marginTop:2 }}>{profile.seniority_level||''} · {profile.years_experience||0} yrs · {profile.remote_preference||''}</div></div>
-                </div>
-                {profile.primary_roles?.length>0 && <div style={{marginBottom:20}}><div className="label">Target Roles</div><div style={{display:'flex',flexWrap:'wrap',gap:6}}>{profile.primary_roles.map(r=><Tag key={r}>{r}</Tag>)}</div></div>}
-                {profile.skills?.length>0 && <div style={{marginBottom:20}}><div className="label">Skills</div><div style={{display:'flex',flexWrap:'wrap',gap:6}}>{profile.skills.map(s=><Tag key={s} color="#34d399">{s}</Tag>)}</div></div>}
-                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16 }}>
-                  {[{l:'Salary',v:profile.salary_expectation},{l:'Locations',v:(profile.preferred_locations||[]).join(', ')},{l:'Remote',v:profile.remote_preference},{l:'Notifications',v:profile.notification_method}].map(p=>(
-                    <div key={p.l}><div style={{fontSize:10,color:'var(--text-dim)',fontWeight:600,textTransform:'uppercase',letterSpacing:1,marginBottom:4}}>{p.l}</div><div style={{fontSize:13,fontFamily:"'Source Serif 4',serif"}}>{p.v||'—'}</div></div>
-                  ))}
-                </div>
-              </div>
-            </div>}
+            {tab==='profile' && profile && <ProfileTab profile={profile} setProfile={setProfile} showReupload={showReupload} setShowReupload={setShowReupload} loadData={loadData} />}
 
             {/* SETTINGS TAB */}
             {tab==='settings' && <SettingsTab profile={profile} setProfile={setProfile} smsTestLoading={smsTestLoading} smsTestResult={smsTestResult} handleSmsTest={handleSmsTest} />}
