@@ -38,6 +38,11 @@
     .match-card { border-radius:16px; padding:22px 24px; cursor:pointer; transition:all 0.3s cubic-bezier(0.16,1,0.3,1); background:var(--surface); border:1px solid var(--border); }
     .match-card:hover { background:var(--card-hover); border-color:var(--border-focus); transform:translateY(-2px); box-shadow:0 8px 30px rgba(167,139,250,0.06); }
     .stat-card { background:var(--surface); border:1px solid var(--border); border-radius:16px; padding:22px 20px; flex:1; min-width:140px; position:relative; overflow:hidden; }
+    .modal-overlay { position:fixed; inset:0; z-index:200; background:rgba(0,0,0,0.6); backdrop-filter:blur(8px); display:flex; align-items:center; justify-content:center; padding:20px; }
+    .modal-box { width:100%; max-width:580px; max-height:85vh; overflow-y:auto; background:var(--surface); border:1px solid var(--border); border-radius:20px; box-shadow:0 24px 80px rgba(0,0,0,0.5); }
+    .drop-zone { width:100%; min-height:180px; padding:28px; border:2px dashed var(--border); border-radius:14px; cursor:pointer; text-align:center; transition:all 0.2s; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; background:var(--surface); }
+    .drop-zone.active { border-color:var(--accent); background:var(--accent-soft); }
+    .drop-zone.has-file { border-color:#34d399; }
   </style>
 </head>
 <body>
@@ -48,7 +53,6 @@
   <script type="text/babel">
     const { useState, useEffect, useCallback } = React;
 
-    // API base = same origin
     const API = window.location.origin + '/api';
 
     async function api(path, opts = {}) {
@@ -59,6 +63,17 @@
         body: opts.body ? JSON.stringify(opts.body) : undefined,
       });
       if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error || 'Request failed: ' + res.status); }
+      return res.json();
+    }
+
+    async function apiUpload(path, formData) {
+      const token = localStorage.getItem('ja_token');
+      const res = await fetch(API + path, {
+        method: 'POST',
+        headers: { ...(token ? { Authorization: 'Bearer ' + token } : {}) },
+        body: formData,
+      });
+      if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error || 'Upload failed: ' + res.status); }
       return res.json();
     }
 
@@ -134,26 +149,54 @@
       );
     }
 
-    // ── RESUME ──
-    function ResumeUpload({ onComplete }) {
+    // ── RESUME UPLOAD ──
+    function ResumeUpload({ onComplete, embedded }) {
+      const [uploadMode, setUploadMode] = useState('file');
       const [text, setText] = useState('');
+      const [file, setFile] = useState(null);
+      const [dragOver, setDragOver] = useState(false);
       const [loading, setLoading] = useState(false);
       const [error, setError] = useState('');
       const [result, setResult] = useState(null);
 
+      const acceptExts = /\.(pdf|txt|jpe?g|png|docx?)$/i;
+
+      const handleFile = (e) => {
+        const f = e.dataTransfer ? e.dataTransfer.files[0] : e.target.files[0];
+        if (f) {
+          if (!acceptExts.test(f.name)) {
+            setError('Unsupported file. Use PDF, TXT, JPG, PNG, DOC, or DOCX.');
+            return;
+          }
+          setFile(f);
+          setError('');
+        }
+      };
+
       const submit = async (e) => {
         e.preventDefault(); setError(''); setLoading(true);
-        try { const d = await api('/profile/resume', { method:'POST', body:{resume_text:text} }); setResult(d.profile); }
-        catch(e) { setError(e.message); }
+        try {
+          let data;
+          if (uploadMode === 'file' && file) {
+            const fd = new FormData();
+            fd.append('resume', file);
+            data = await apiUpload('/profile/resume/upload', fd);
+          } else {
+            data = await api('/profile/resume', { method:'POST', body:{resume_text:text} });
+          }
+          setResult(data.profile);
+        } catch(e) { setError(e.message); }
         setLoading(false);
       };
 
+      const canSubmit = uploadMode === 'file' ? !!file : text.length >= 50;
+
       if (result) return (
-        <div className="screen" style={{ background:'radial-gradient(ellipse at 50% 0%,var(--green-soft) 0%,var(--bg) 60%)' }}>
-          <div style={{ maxWidth:520, padding:20, width:'100%' }}>
+        <div className={embedded ? '' : 'screen'} style={embedded ? {} : { background:'radial-gradient(ellipse at 50% 0%,var(--green-soft) 0%,var(--bg) 60%)' }}>
+          <div style={{ maxWidth:520, padding:20, width:'100%', margin: embedded ? '0 auto' : undefined }}>
             <div className="fade-up" style={{ textAlign:'center', marginBottom:32 }}>
               <div style={{ display:'inline-flex', alignItems:'center', justifyContent:'center', width:56, height:56, borderRadius:'50%', background:'var(--green-soft)', border:'2px solid #34d39940', marginBottom:16, fontSize:24, color:'var(--green)' }}>✓</div>
-              <h2 style={{ fontSize:22 }}>Profile Extracted</h2>
+              <h2 style={{ fontSize:22 }}>Profile {embedded ? 'Updated' : 'Extracted'}</h2>
               <p style={{ color:'var(--text-muted)', fontSize:14 }}>AI analyzed your resume</p>
             </div>
             <div className="card fade-up fade-d1">
@@ -165,27 +208,154 @@
                 {result.salary_expectation && <span><span style={{ color:'var(--text-dim)', fontSize:11 }}>Salary: </span><strong>{result.salary_expectation}</strong></span>}
               </div>
             </div>
-            <button onClick={onComplete} className="btn fade-up fade-d2" style={{ width:'100%', padding:14, marginTop:20, background:'var(--accent)', color:'#fff', fontSize:14 }}>Go to Dashboard →</button>
+            <button onClick={onComplete} className="btn fade-up fade-d2" style={{ width:'100%', padding:14, marginTop:20, background:'var(--accent)', color:'#fff', fontSize:14 }}>{embedded ? 'Done' : 'Go to Dashboard →'}</button>
           </div>
         </div>
       );
 
       return (
-        <div className="screen" style={{ background:'radial-gradient(ellipse at 50% 0%,var(--accent-soft) 0%,var(--bg) 60%)' }}>
-          <div style={{ maxWidth:560, width:'100%', padding:20 }}>
+        <div className={embedded ? '' : 'screen'} style={embedded ? {} : { background:'radial-gradient(ellipse at 50% 0%,var(--accent-soft) 0%,var(--bg) 60%)' }}>
+          <div style={{ maxWidth:560, width:'100%', padding:20, margin: embedded ? '0 auto' : undefined }}>
             <div style={{ textAlign:'center', marginBottom:32 }}>
               <div style={{ fontSize:40, marginBottom:12, opacity:0.4 }}>📄</div>
-              <h2 style={{ fontSize:22 }}>Upload Your Resume</h2>
-              <p style={{ color:'var(--text-muted)', fontSize:14 }}>Paste your resume text. AI extracts your profile once.</p>
+              <h2 style={{ fontSize:22 }}>{embedded ? 'Re-upload Resume' : 'Upload Your Resume'}</h2>
+              <p style={{ color:'var(--text-muted)', fontSize:14 }}>Upload a file or paste text. AI will extract your profile.</p>
             </div>
+
+            {/* Mode toggle */}
+            <div style={{ display:'flex', gap:4, background:'var(--bg)', borderRadius:10, padding:4, marginBottom:20 }}>
+              {[{id:'file',l:'Upload File'},{id:'text',l:'Paste Text'}].map(m => (
+                <button key={m.id} onClick={()=>{setUploadMode(m.id);setError('');}} className="btn" style={{ flex:1, padding:'10px 0', borderRadius:8, fontSize:13, background:uploadMode===m.id?'var(--accent)':'transparent', color:uploadMode===m.id?'#fff':'var(--text-muted)' }}>{m.l}</button>
+              ))}
+            </div>
+
             <form onSubmit={submit}>
-              <textarea value={text} onChange={e=>setText(e.target.value)} placeholder="Paste your resume text here..." style={{ width:'100%', minHeight:240, padding:18, background:'var(--surface)', border:'1px solid var(--border)', borderRadius:14, color:'var(--text)', fontSize:13, lineHeight:1.7, resize:'vertical', outline:'none', fontFamily:"'Source Serif 4',serif", boxSizing:'border-box' }} />
+              {uploadMode === 'file' ? (
+                <div
+                  className={'drop-zone' + (dragOver ? ' active' : '') + (file ? ' has-file' : '')}
+                  onDragOver={(e)=>{e.preventDefault();setDragOver(true);}}
+                  onDragLeave={()=>setDragOver(false)}
+                  onDrop={(e)=>{e.preventDefault();setDragOver(false);handleFile(e);}}
+                  onClick={()=>document.getElementById('file-input')?.click()}
+                >
+                  <input id="file-input" type="file" accept=".pdf,.txt,.jpg,.jpeg,.png,.doc,.docx" onChange={handleFile} style={{display:'none'}} />
+                  {file ? (
+                    <>
+                      <div style={{fontSize:32}}>✅</div>
+                      <div style={{fontSize:14,fontWeight:600,color:'#34d399'}}>{file.name}</div>
+                      <div style={{fontSize:12,color:'var(--text-dim)'}}>{(file.size/1024).toFixed(1)} KB · Click or drag to replace</div>
+                    </>
+                  ) : (
+                    <>
+                      <div style={{fontSize:32,opacity:0.5}}>📎</div>
+                      <div style={{fontSize:14,fontWeight:600,color:'var(--text-muted)'}}>Drag & drop your resume here</div>
+                      <div style={{fontSize:12,color:'var(--text-dim)'}}>or click to browse · PDF, JPG, PNG, DOC, DOCX, TXT</div>
+                      <div style={{fontSize:11,color:'var(--text-dim)',marginTop:4}}>Max 5MB</div>
+                    </>
+                  )}
+                </div>
+              ) : (
+                <textarea value={text} onChange={e=>setText(e.target.value)} placeholder="Paste your resume text here..." style={{ width:'100%', minHeight:240, padding:18, background:'var(--surface)', border:'1px solid var(--border)', borderRadius:14, color:'var(--text)', fontSize:13, lineHeight:1.7, resize:'vertical', outline:'none', fontFamily:"'Source Serif 4',serif", boxSizing:'border-box' }} />
+              )}
               {error && <p style={{ color:'var(--red)', fontSize:13, marginTop:10 }}>{error}</p>}
-              <button type="submit" disabled={loading||text.length<50} className="btn" style={{ width:'100%', padding:14, marginTop:16, background:loading||text.length<50?'var(--text-dim)':'var(--accent)', color:'#fff', fontSize:14, display:'flex', alignItems:'center', justifyContent:'center', gap:8 }}>
-                {loading ? '⚙️ Analyzing...' : '⚡ Extract Profile with AI'}
+              <button type="submit" disabled={loading||!canSubmit} className="btn" style={{ width:'100%', padding:14, marginTop:16, background:loading||!canSubmit?'var(--text-dim)':'var(--accent)', color:'#fff', fontSize:14, display:'flex', alignItems:'center', justifyContent:'center', gap:8 }}>
+                {loading ? 'Analyzing resume...' : 'Extract Profile with AI'}
               </button>
             </form>
-            <p style={{ textAlign:'center', color:'var(--text-dim)', fontSize:12, marginTop:10 }}>AI runs once to save costs.</p>
+            <p style={{ textAlign:'center', color:'var(--text-dim)', fontSize:12, marginTop:10 }}>Supports PDF, JPG, PNG, DOC, DOCX, and plain text.</p>
+          </div>
+        </div>
+      );
+    }
+
+    // ── AI INSIGHTS MODAL ──
+    function InsightsModal({ onClose }) {
+      const [insights, setInsights] = useState(null);
+      const [loading, setLoading] = useState(true);
+      const [error, setError] = useState('');
+
+      useEffect(() => {
+        api('/experience/insights')
+          .then(d => setInsights(d.insights))
+          .catch(e => setError(e.message))
+          .finally(() => setLoading(false));
+      }, []);
+
+      const qc = { low:'#ef4444', medium:'#fbbf24', high:'#34d399' };
+
+      return (
+        <div className="modal-overlay" onClick={onClose}>
+          <div className="modal-box" onClick={e=>e.stopPropagation()}>
+            <div style={{ padding:'24px 28px 18px', borderBottom:'1px solid var(--border)', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+              <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+                <div style={{ width:36, height:36, borderRadius:10, background:'linear-gradient(135deg,#a78bfa20,#fbbf2420)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:18 }}>💡</div>
+                <div>
+                  <h2 style={{ margin:0, fontSize:18, fontWeight:700 }}>AI Insights</h2>
+                  <p style={{ margin:0, fontSize:11, color:'var(--text-dim)' }}>Personalized suggestions for your job search</p>
+                </div>
+              </div>
+              <button onClick={onClose} style={{ background:'none', border:'none', color:'var(--text-dim)', fontSize:20, cursor:'pointer', padding:4 }}>×</button>
+            </div>
+            <div style={{ padding:'24px 28px 28px' }}>
+              {loading ? (
+                <div style={{ textAlign:'center', padding:40, color:'var(--text-muted)' }}>
+                  <div style={{ fontSize:28, marginBottom:12, animation:'pulse 1.5s ease-in-out infinite' }}>🧠</div>
+                  Analyzing your profile & matches...
+                </div>
+              ) : error ? (
+                <div style={{ textAlign:'center', padding:40, color:'var(--red)' }}>
+                  <div style={{ fontSize:28, marginBottom:12 }}>⚠️</div>{error}
+                </div>
+              ) : insights ? (
+                <div style={{ display:'flex', flexDirection:'column', gap:20 }}>
+                  {/* Summary */}
+                  <div style={{ padding:18, background:'var(--bg)', borderRadius:14, border:'1px solid var(--border)' }}>
+                    <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:10 }}>
+                      <span className="label" style={{marginBottom:0}}>Summary</span>
+                      <Tag color={qc[insights.match_quality]||'#6b7280'}>{insights.match_quality} quality</Tag>
+                    </div>
+                    <p style={{ margin:0, fontSize:14, lineHeight:1.6, fontFamily:"'Source Serif 4',serif", color:'var(--text-muted)' }}>{insights.summary}</p>
+                  </div>
+
+                  {/* Strengths */}
+                  {insights.strengths?.length > 0 && <div>
+                    <div className="label" style={{color:'#34d399'}}>Strengths</div>
+                    {insights.strengths.map((s,i) => <div key={i} style={{ display:'flex', alignItems:'center', gap:8, fontSize:13, color:'var(--text-muted)', marginBottom:6 }}><span style={{color:'#34d399',flexShrink:0}}>+</span> {s}</div>)}
+                  </div>}
+
+                  {/* Suggestions */}
+                  {insights.improvements?.length > 0 && <div>
+                    <div className="label" style={{color:'#fbbf24'}}>Suggestions</div>
+                    {insights.improvements.map((s,i) => <div key={i} style={{ display:'flex', alignItems:'center', gap:8, fontSize:13, color:'var(--text-muted)', marginBottom:6 }}><span style={{color:'#fbbf24',flexShrink:0}}>→</span> {s}</div>)}
+                  </div>}
+
+                  {/* Skill gaps */}
+                  {insights.skill_gaps?.length > 0 && <div>
+                    <div className="label" style={{color:'#ef4444'}}>Skill Gaps</div>
+                    <div style={{ display:'flex', flexWrap:'wrap', gap:6 }}>{insights.skill_gaps.map((s,i) => <Tag key={i} color="#ef4444">{s}</Tag>)}</div>
+                  </div>}
+
+                  {/* Market trends */}
+                  {insights.market_trends && <div style={{ padding:16, background:'linear-gradient(135deg,#a78bfa08,#60a5fa08)', borderRadius:12, border:'1px solid #a78bfa15' }}>
+                    <div className="label" style={{color:'#60a5fa'}}>Market Trends</div>
+                    <p style={{ margin:0, fontSize:13, lineHeight:1.6, color:'var(--text-muted)', fontFamily:"'Source Serif 4',serif" }}>{insights.market_trends}</p>
+                  </div>}
+
+                  {/* Next steps */}
+                  {insights.next_steps?.length > 0 && <div>
+                    <div className="label" style={{color:'#a78bfa'}}>Next Steps</div>
+                    {insights.next_steps.map((s,i) => (
+                      <div key={i} style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 14px', background:'var(--bg)', borderRadius:10, border:'1px solid var(--border)', fontSize:13, color:'var(--text-muted)', marginBottom:8 }}>
+                        <span style={{ width:22, height:22, borderRadius:6, flexShrink:0, background:'var(--accent-soft)', color:'var(--accent)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:11, fontWeight:700 }}>{i+1}</span>
+                        {s}
+                      </div>
+                    ))}
+                  </div>}
+
+                  {insights.confidence_score && <div style={{ textAlign:'center', paddingTop:8 }}><span style={{ fontSize:11, color:'var(--text-dim)' }}>Confidence: {insights.confidence_score}%</span></div>}
+                </div>
+              ) : null}
+            </div>
           </div>
         </div>
       );
@@ -198,8 +368,13 @@
       const [stats, setStats] = useState({ total_matches:0, today_matches:0, notifications_sent:0, avg_score:0 });
       const [profile, setProfile] = useState(null);
       const [loading, setLoading] = useState(true);
+      const [testRunning, setTestRunning] = useState(false);
+      const [testResult, setTestResult] = useState(null);
+      const [showInsights, setShowInsights] = useState(false);
+      const [showReupload, setShowReupload] = useState(false);
 
-      useEffect(() => {
+      const loadData = useCallback(() => {
+        setLoading(true);
         Promise.all([
           api('/matches').catch(()=>({matches:[]})),
           api('/matches/stats').catch(()=>({total_matches:0,today_matches:0,notifications_sent:0,avg_score:0})),
@@ -207,9 +382,29 @@
         ]).then(([m,s,p]) => { setMatches(m.matches||[]); setStats(s); setProfile(p); setLoading(false); });
       }, []);
 
+      useEffect(() => { loadData(); }, [loadData]);
+
+      const trackAction = useCallback((action, matchId) => {
+        api('/experience', { method:'POST', body:{ action, match_id: matchId || null } }).catch(()=>{});
+      }, []);
+
+      const handleTestRun = async () => {
+        setTestRunning(true); setTestResult(null);
+        try {
+          trackAction('test_run');
+          const res = await api('/admin/run-worker', { method:'POST' });
+          setTestResult({ ok:true, msg: res.message || 'Worker completed!' });
+          loadData();
+        } catch(e) { setTestResult({ ok:false, msg: e.message }); }
+        setTestRunning(false);
+      };
+
       return (
         <div style={{ minHeight:'100vh' }}>
           <div className="grid-bg" />
+
+          {showInsights && <InsightsModal onClose={()=>setShowInsights(false)} />}
+
           <header style={{ position:'sticky', top:0, zIndex:100, borderBottom:'1px solid var(--border)', background:'rgba(10,10,18,0.85)', backdropFilter:'blur(16px)', padding:'0 28px', height:58, display:'flex', alignItems:'center', justifyContent:'space-between' }}>
             <div style={{ display:'flex', alignItems:'center', gap:10 }}>
               <div style={{ width:30, height:30, borderRadius:8, background:'linear-gradient(135deg,#a78bfa30,#34d39930)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:15 }}>🎯</div>
@@ -221,10 +416,14 @@
                 <button key={n.id} onClick={()=>setTab(n.id)} className={'nav-btn'+(tab===n.id?' active':'')}><span style={{fontSize:13}}>{n.icon}</span> {n.l}</button>
               ))}
             </nav>
-            <button onClick={onLogout} style={{ padding:'8px 14px', background:'transparent', border:'1px solid var(--border)', borderRadius:8, color:'var(--text-muted)', fontSize:12, cursor:'pointer', fontFamily:'inherit' }}>Sign Out</button>
+            <div style={{ display:'flex', gap:8 }}>
+              <button onClick={()=>setShowInsights(true)} className="btn" style={{ display:'flex', alignItems:'center', gap:6, padding:'8px 14px', background:'linear-gradient(135deg,#a78bfa15,#fbbf2415)', border:'1px solid #a78bfa30', borderRadius:8, color:'#fbbf24', fontSize:12 }}>💡 AI Insights</button>
+              <button onClick={onLogout} style={{ padding:'8px 14px', background:'transparent', border:'1px solid var(--border)', borderRadius:8, color:'var(--text-muted)', fontSize:12, cursor:'pointer', fontFamily:'inherit' }}>Sign Out</button>
+            </div>
           </header>
 
           <main style={{ position:'relative', zIndex:1, maxWidth:920, margin:'0 auto', padding:'28px 20px 60px' }}>
+            {/* MATCHES TAB */}
             {tab==='matches' && <>
               <div style={{ display:'flex', gap:14, marginBottom:28, flexWrap:'wrap' }}>
                 {[{l:'Total Matches',v:stats.total_matches,c:'#a78bfa'},{l:'Today',v:stats.today_matches,c:'#fbbf24'},{l:'Alerts Sent',v:stats.notifications_sent,c:'#34d399'},{l:'Avg Score',v:stats.avg_score+'%',c:'#60a5fa'}].map((s,i) => (
@@ -235,17 +434,40 @@
                   </div>
                 ))}
               </div>
-              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'baseline', marginBottom:16 }}>
+
+              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16 }}>
                 <h2 style={{ fontSize:18, fontWeight:600 }}>Recent Matches</h2>
-                <span style={{ fontSize:11, color:'var(--text-dim)', fontStyle:'italic', fontFamily:"'Source Serif 4',serif" }}>Updated 3x daily</span>
+                <div style={{ display:'flex', gap:10, alignItems:'center' }}>
+                  <button onClick={handleTestRun} disabled={testRunning} className="btn" style={{ display:'flex', alignItems:'center', gap:6, padding:'8px 16px', background:testRunning?'var(--text-dim)':'linear-gradient(135deg,#34d39920,#34d39910)', border:'1px solid #34d39940', borderRadius:8, color:testRunning?'var(--text-dim)':'#34d399', fontSize:12 }}>
+                    {testRunning ? '⏳ Running...' : '🧪 Test Matching'}
+                  </button>
+                  <span style={{ fontSize:11, color:'var(--text-dim)', fontStyle:'italic', fontFamily:"'Source Serif 4',serif" }}>Updated 3x daily</span>
+                </div>
               </div>
+
+              {testResult && (
+                <div style={{ padding:'12px 18px', marginBottom:16, borderRadius:12, background:testResult.ok?'#34d39910':'#ef444410', border:'1px solid '+(testResult.ok?'#34d39930':'#ef444430'), color:testResult.ok?'#34d399':'#ef4444', fontSize:13, display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+                  <span>{testResult.ok?'✓':'✗'} {testResult.msg}</span>
+                  <button onClick={()=>setTestResult(null)} style={{ background:'none', border:'none', color:'inherit', cursor:'pointer', fontSize:16 }}>×</button>
+                </div>
+              )}
+
               {loading ? <div style={{ textAlign:'center', padding:60, color:'var(--text-muted)' }}>Loading...</div>
-              : matches.length===0 ? <div className="card" style={{ textAlign:'center', padding:60 }}><div style={{fontSize:36,marginBottom:12}}>📭</div><h3>No matches yet</h3><p style={{color:'var(--text-muted)',fontSize:14,marginTop:6}}>Your agent is searching. Matches appear after the next scan.</p></div>
-              : <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+              : matches.length===0 ? (
+                <div className="card" style={{ textAlign:'center', padding:60 }}>
+                  <div style={{fontSize:36,marginBottom:12}}>📭</div>
+                  <h3>No matches yet</h3>
+                  <p style={{color:'var(--text-muted)',fontSize:14,marginTop:6,marginBottom:16}}>Your agent is searching. Matches appear after the next scan.</p>
+                  <button onClick={handleTestRun} disabled={testRunning} className="btn" style={{ padding:'10px 24px', border:'1px solid #34d39940', background:'#34d39915', color:'#34d399', fontSize:13 }}>
+                    {testRunning ? 'Running...' : '🧪 Run Test Scan Now'}
+                  </button>
+                </div>
+              ) : (
+                <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
                   {matches.map((m,i) => {
                     const j = m.jobs || m.job || {};
                     return (
-                      <div key={m.id} className={'match-card fade-up fade-d'+Math.min(i,4)} onClick={()=>j.url&&window.open(j.url,'_blank')}>
+                      <div key={m.id} className={'match-card fade-up fade-d'+Math.min(i,4)} onClick={()=>{if(j.url){window.open(j.url,'_blank');trackAction('apply_click',m.id);}}}>
                         <div style={{ display:'flex', gap:16, alignItems:'flex-start' }}>
                           <ScoreRing score={m.score} />
                           <div style={{ flex:1 }}>
@@ -266,11 +488,24 @@
                     );
                   })}
                 </div>
-              }
+              )}
             </>}
 
+            {/* PROFILE TAB */}
             {tab==='profile' && profile && <div>
-              <h2 style={{ margin:'0 0 18px', fontSize:18, fontWeight:600 }}>Your Profile</h2>
+              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:18 }}>
+                <h2 style={{ margin:0, fontSize:18, fontWeight:600 }}>Your Profile</h2>
+                <button onClick={()=>setShowReupload(!showReupload)} className="btn" style={{ display:'flex', alignItems:'center', gap:6, padding:'8px 16px', background:showReupload?'var(--accent-soft)':'transparent', border:'1px solid '+(showReupload?'var(--accent-glow)':'var(--border)'), borderRadius:8, color:showReupload?'var(--accent)':'var(--text-muted)', fontSize:12 }}>
+                  📄 {showReupload ? 'Hide Upload' : 'Re-upload Resume'}
+                </button>
+              </div>
+
+              {showReupload && (
+                <div className="card" style={{ borderRadius:18, marginBottom:20, padding:28 }}>
+                  <ResumeUpload embedded onComplete={()=>{setShowReupload(false);loadData();}} />
+                </div>
+              )}
+
               <div className="card" style={{ borderRadius:18, position:'relative', overflow:'hidden' }}>
                 <div style={{ position:'absolute', top:0, left:0, right:0, height:3, background:'linear-gradient(90deg,#a78bfa,#34d399,#60a5fa)' }} />
                 <div style={{ display:'flex', alignItems:'center', gap:16, marginBottom:24 }}>
@@ -287,6 +522,7 @@
               </div>
             </div>}
 
+            {/* SETTINGS TAB */}
             {tab==='settings' && <div>
               <h2 style={{ margin:'0 0 18px', fontSize:18, fontWeight:600 }}>Settings</h2>
               <div className="card" style={{ borderRadius:18, marginBottom:20 }}>
