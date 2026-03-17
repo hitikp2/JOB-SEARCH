@@ -1030,7 +1030,7 @@ export default function Home() {
     }}>Loading...</div>
   );
 
-  if (!user) return <AuthScreen onAuth={u => { setUser(u); setNeedsResume(true); }} />;
+  if (!user) return <AuthScreen onAuth={u => { setUser(u); if (!u.profile_complete) setNeedsResume(true); }} />;
   if (needsResume) return <ResumeUpload onComplete={() => setNeedsResume(false)} />;
 
   return (
