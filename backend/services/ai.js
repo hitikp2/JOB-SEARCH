@@ -179,9 +179,12 @@ export async function analyzeTopJobs(user, jobs) {
     skills: (user.skills || []).join(', '),
     level: user.seniority_level || 'unknown',
     experience: user.years_experience || 0,
+    industries: (user.industries || []).join(', '),
     locations: (user.preferred_locations || []).join(', '),
     remote: user.remote_preference || 'flexible',
-    salary: user.salary_expectation || 'not specified'
+    salary: user.salary_expectation || 'not specified',
+    work_schedule: user.work_schedule || 'full_time',
+    location_type: user.location_type || 'any'
   };
 
   const jobList = jobs.slice(0, 25).map((j, i) => ({
@@ -194,8 +197,17 @@ export async function analyzeTopJobs(user, jobs) {
   }));
 
   const systemPrompt = `You are a job matching AI. Score each job's relevance to the candidate profile.
-Consider: role fit, skill overlap, location match, salary range, seniority alignment, and transferable skills.
+Consider ALL of these factors from the candidate's saved preferences:
+- Role fit (do the job titles align with their target roles?)
+- Skill overlap (does the job require skills they have?)
+- Seniority alignment (does the job level match their experience level?)
+- Industry fit (is the job in their preferred industries?)
+- Location match (does the location match their preference?)
+- Work schedule (full-time vs part-time vs contract - does it match?)
+- Salary range (is it in their expected range?)
+- Transferable skills (could their skills transfer to this role?)
 Be generous with scoring - consider adjacent roles and transferable experience.
+Penalize jobs that clearly mismatch their seniority level or work schedule preference.
 Return ONLY valid JSON array:
 [{"index":0,"score":85,"summary":"Brief 15-word reason this job fits or doesn't"}]
 Score 0-100. Include ALL jobs. Sort by score descending.`;
@@ -211,8 +223,9 @@ ${JSON.stringify(jobList)}`;
 
 // ============================================
 // JOB SUMMARIZATION (run per user, 3-5 jobs)
+// Now includes user profile context for personalized summaries
 // ============================================
-export async function summarizeJobs(jobs) {
+export async function summarizeJobs(jobs, userProfile = null) {
   const minimal = jobs.map(j => ({
     title: j.title,
     company: j.company,
@@ -221,15 +234,32 @@ export async function summarizeJobs(jobs) {
     description: (j.description || '').slice(0, 600)
   }));
 
-  const systemPrompt = `Summarize job listings for a job alert notification.
+  // Build user context string if profile is provided
+  let userContext = '';
+  if (userProfile) {
+    const parts = [];
+    if (userProfile.primary_roles?.length) parts.push(`Target roles: ${userProfile.primary_roles.join(', ')}`);
+    if (userProfile.skills?.length) parts.push(`Key skills: ${userProfile.skills.slice(0, 8).join(', ')}`);
+    if (userProfile.seniority_level) parts.push(`Level: ${userProfile.seniority_level}`);
+    if (userProfile.industries?.length) parts.push(`Industries: ${userProfile.industries.join(', ')}`);
+    if (userProfile.remote_preference) parts.push(`Remote preference: ${userProfile.remote_preference}`);
+    if (userProfile.salary_expectation) parts.push(`Salary target: ${userProfile.salary_expectation}`);
+    if (userProfile.work_schedule) parts.push(`Work type: ${userProfile.work_schedule}`);
+    if (parts.length > 0) {
+      userContext = `\n\nCandidate Profile:\n${parts.join('\n')}`;
+    }
+  }
+
+  const systemPrompt = `Summarize job listings for a personalized job alert notification.
 Rules:
 - Maximum 25 words per job summary
-- Focus on: role highlights, location, salary, key requirement
+- Highlight WHY each job matches the candidate's profile (skills, role fit, location, salary)
+- If a job is a poor match, note what's missing
 - Plain language, no jargon
 - Return ONLY valid JSON
 
 Return format:
 {"jobs":[{"title":"","company":"","location":"","salary":"","summary":""}]}`;
 
-  return callAI(systemPrompt, `Summarize these jobs:\n${JSON.stringify(minimal)}`);
+  return callAI(systemPrompt, `${userContext}\n\nSummarize these jobs:\n${JSON.stringify(minimal)}`);
 }

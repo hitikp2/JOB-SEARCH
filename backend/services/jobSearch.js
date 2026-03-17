@@ -108,7 +108,8 @@ function formatSalary(raw) {
 
 /**
  * Build search queries dynamically from ALL user profiles.
- * Combines roles, skills, location preferences, and filters.
+ * Combines roles, skills, industries, location preferences, and filters.
+ * Uses the user's full saved preferences for targeted searches.
  * Deduplicates and limits to avoid API overuse.
  */
 export function buildSearchQueries(users) {
@@ -117,32 +118,64 @@ export function buildSearchQueries(users) {
   for (const user of users) {
     const roles = user.primary_roles || [];
     const locations = user.preferred_locations || [];
+    const skills = user.skills || [];
+    const industries = user.industries || [];
     const locType = user.location_type || 'any';
     const remoteOk = locType === 'remote' || ['remote', 'flexible'].includes(user.remote_preference);
     const schedule = user.work_schedule || 'full_time';
+    const seniority = user.seniority_level || '';
 
     // Schedule suffix for queries
     const schedSuffix = schedule === 'part_time' ? ' part time' : schedule === 'contract' ? ' contract' : schedule === 'internship' ? ' internship' : '';
 
+    // Seniority prefix (only for non-generic levels)
+    const seniorityPrefix = ['senior', 'lead', 'junior'].includes(seniority) ? `${seniority} ` : '';
+
+    // ── Role-based queries (primary) ──
     for (const role of roles.slice(0, 3)) {
+      const roleQuery = role.toLowerCase().includes(seniority) ? role : `${seniorityPrefix}${role}`;
+
       if (locType === 'remote' || remoteOk) {
-        querySet.add(`${role} remote${schedSuffix}`);
+        querySet.add(`${roleQuery} remote${schedSuffix}`);
       }
 
       if (locType !== 'remote') {
         for (const loc of locations.slice(0, 2)) {
-          querySet.add(`${role} ${loc}${schedSuffix}`);
+          querySet.add(`${roleQuery} ${loc}${schedSuffix}`);
         }
       }
 
       if (locations.length === 0 && !remoteOk) {
-        querySet.add(`${role}${schedSuffix}`);
+        querySet.add(`${roleQuery}${schedSuffix}`);
       }
+    }
+
+    // ── Skill-augmented queries (for more targeted results) ──
+    // Use top 2 skills combined with first role for precision
+    const topSkills = skills.slice(0, 2);
+    const primaryRole = roles[0] || '';
+    if (primaryRole && topSkills.length > 0) {
+      const skillStr = topSkills.join(' ');
+      if (remoteOk) {
+        querySet.add(`${primaryRole} ${skillStr} remote`);
+      } else if (locations.length > 0) {
+        querySet.add(`${primaryRole} ${skillStr} ${locations[0]}`);
+      } else {
+        querySet.add(`${primaryRole} ${skillStr}`);
+      }
+    }
+
+    // ── Industry-specific queries (broaden reach) ──
+    // Combine top industry with first role for industry-targeted results
+    if (industries.length > 0 && primaryRole) {
+      const topIndustry = industries[0];
+      querySet.add(`${primaryRole} ${topIndustry}${remoteOk ? ' remote' : ''}`);
     }
   }
 
-  const queries = Array.from(querySet).slice(0, 15);
+  const queries = Array.from(querySet).slice(0, 18);
   console.log(`[JobSearch] Built ${queries.length} search queries from ${users.length} user profiles`);
+  console.log(`[JobSearch] Queries: ${queries.join(' | ')}`);
   return queries;
 }
 

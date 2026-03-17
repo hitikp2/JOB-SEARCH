@@ -132,12 +132,12 @@ export async function runJobWorker() {
         continue;
       }
 
-      // AI summarization
-      console.log(`[Worker]   → Summarizing ${newMatches.length} jobs with AI...`);
+      // AI summarization — pass user profile for personalized summaries
+      console.log(`[Worker]   → Summarizing ${newMatches.length} jobs with AI (user context: roles=${(user.primary_roles||[]).join(',')}, skills=${(user.skills||[]).slice(0,3).join(',')})...`);
       let summaries;
       try {
         const topJobs = newMatches.map(m => m.job);
-        const result = await summarizeJobs(topJobs);
+        const result = await summarizeJobs(topJobs, user);
         summaries = result.jobs || result;
       } catch (aiErr) {
         console.error(`[Worker]   → AI failed:`, aiErr.message);

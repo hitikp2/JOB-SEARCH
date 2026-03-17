@@ -860,10 +860,21 @@ function Dashboard({ user, onLogout }) {
                 </div>
               )}
 
+              {profile.industries?.length > 0 && (
+                <div style={{ marginBottom: 20 }}>
+                  <div style={{ fontSize: 10, color: 'var(--text-dim)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 8 }}>Industries</div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    {profile.industries.map(i => <Tag key={i} color="#60a5fa">{i}</Tag>)}
+                  </div>
+                </div>
+              )}
+
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
                 <PrefItem label="Salary" value={profile.salary_expectation} />
                 <PrefItem label="Locations" value={(profile.preferred_locations || []).join(', ')} />
                 <PrefItem label="Remote" value={profile.remote_preference} />
+                <PrefItem label="Work Schedule" value={(profile.work_schedule || 'full_time').replace('_', ' ')} />
+                <PrefItem label="Location Type" value={profile.location_type || 'any'} />
                 <PrefItem label="Notifications" value={profile.notification_method} />
               </div>
             </div>
@@ -875,6 +886,164 @@ function Dashboard({ user, onLogout }) {
           <div>
             <h2 style={{ margin: '0 0 18px', fontSize: 18, fontWeight: 600 }}>Settings</h2>
 
+            {/* ── Job Search Preferences ── */}
+            <div style={{
+              background: 'var(--surface)', border: '1px solid var(--border)',
+              borderRadius: 18, padding: 28, marginBottom: 20, position: 'relative', overflow: 'hidden',
+            }}>
+              <div style={{
+                position: 'absolute', top: 0, left: 0, right: 0, height: 3,
+                background: 'linear-gradient(90deg, #a78bfa, #fbbf24)',
+              }} />
+              <div style={{ fontSize: 10, color: 'var(--text-dim)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 6 }}>
+                Job Search Preferences
+              </div>
+              <p style={{ fontSize: 12, color: 'var(--text-dim)', margin: '0 0 18px', fontFamily: "'Source Serif 4', serif" }}>
+                These settings directly control which jobs the AI finds and matches for you.
+              </p>
+
+              {/* Work Schedule */}
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, marginBottom: 8 }}>Work Schedule</div>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  {[
+                    { value: 'full_time', label: 'Full Time' },
+                    { value: 'part_time', label: 'Part Time' },
+                    { value: 'contract', label: 'Contract' },
+                    { value: 'internship', label: 'Internship' },
+                  ].map(opt => (
+                    <button key={opt.value} onClick={async () => {
+                      await api('/profile', { method: 'PATCH', body: { work_schedule: opt.value } });
+                      setProfile(prev => ({ ...prev, work_schedule: opt.value }));
+                    }} style={{
+                      padding: '10px 20px', borderRadius: 10, cursor: 'pointer',
+                      fontSize: 12, fontWeight: 600, fontFamily: 'inherit', transition: 'all 0.25s',
+                      background: profile?.work_schedule === opt.value ? 'var(--accent-soft)' : 'transparent',
+                      color: profile?.work_schedule === opt.value ? 'var(--accent)' : 'var(--text-dim)',
+                      border: `1px solid ${profile?.work_schedule === opt.value ? 'var(--accent-glow)' : 'var(--border)'}`,
+                    }}>{opt.label}</button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Location Type */}
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, marginBottom: 8 }}>Location Type</div>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  {[
+                    { value: 'any', label: 'Any' },
+                    { value: 'remote', label: 'Remote Only' },
+                    { value: 'hybrid', label: 'Hybrid' },
+                    { value: 'local', label: 'On-site / Local' },
+                  ].map(opt => (
+                    <button key={opt.value} onClick={async () => {
+                      await api('/profile', { method: 'PATCH', body: { location_type: opt.value } });
+                      setProfile(prev => ({ ...prev, location_type: opt.value }));
+                    }} style={{
+                      padding: '10px 20px', borderRadius: 10, cursor: 'pointer',
+                      fontSize: 12, fontWeight: 600, fontFamily: 'inherit', transition: 'all 0.25s',
+                      background: profile?.location_type === opt.value ? '#34d39918' : 'transparent',
+                      color: profile?.location_type === opt.value ? '#34d399' : 'var(--text-dim)',
+                      border: `1px solid ${profile?.location_type === opt.value ? '#34d39940' : 'var(--border)'}`,
+                    }}>{opt.label}</button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Search Radius (only visible for local/hybrid) */}
+              {(profile?.location_type === 'local' || profile?.location_type === 'hybrid') && (
+                <div style={{ marginBottom: 20 }}>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, marginBottom: 8 }}>
+                    Search Radius: {profile?.search_radius || 50} miles
+                  </div>
+                  <input type="range" min="10" max="200" step="10"
+                    value={profile?.search_radius || 50}
+                    onChange={async (e) => {
+                      const val = parseInt(e.target.value);
+                      setProfile(prev => ({ ...prev, search_radius: val }));
+                    }}
+                    onMouseUp={async (e) => {
+                      await api('/profile', { method: 'PATCH', body: { search_radius: parseInt(e.target.value) } });
+                    }}
+                    style={{ width: '100%', accentColor: 'var(--accent)' }}
+                  />
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-dim)' }}>
+                    <span>10 mi</span><span>200 mi</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Seniority Level */}
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, marginBottom: 8 }}>Seniority Level</div>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  {['junior', 'mid', 'senior', 'lead', 'executive'].map(level => (
+                    <button key={level} onClick={async () => {
+                      await api('/profile', { method: 'PATCH', body: { seniority_level: level } });
+                      setProfile(prev => ({ ...prev, seniority_level: level }));
+                    }} style={{
+                      padding: '10px 20px', borderRadius: 10, cursor: 'pointer',
+                      fontSize: 12, fontWeight: 600, fontFamily: 'inherit', textTransform: 'capitalize',
+                      transition: 'all 0.25s',
+                      background: profile?.seniority_level === level ? '#fbbf2418' : 'transparent',
+                      color: profile?.seniority_level === level ? '#fbbf24' : 'var(--text-dim)',
+                      border: `1px solid ${profile?.seniority_level === level ? '#fbbf2440' : 'var(--border)'}`,
+                    }}>{level}</button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Industries (editable tags) */}
+              <div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, marginBottom: 8 }}>Industries</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+                  {(profile?.industries || []).map((ind, i) => (
+                    <span key={i} style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 6,
+                      padding: '5px 12px', borderRadius: 8, fontSize: 12, fontWeight: 600,
+                      background: '#60a5fa18', color: '#60a5fa', border: '1px solid #60a5fa25',
+                    }}>
+                      {ind}
+                      <button onClick={async () => {
+                        const updated = (profile.industries || []).filter((_, idx) => idx !== i);
+                        await api('/profile', { method: 'PATCH', body: { industries: updated } });
+                        setProfile(prev => ({ ...prev, industries: updated }));
+                      }} style={{
+                        background: 'none', border: 'none', color: '#60a5fa', cursor: 'pointer',
+                        fontSize: 14, padding: 0, lineHeight: 1,
+                      }}>×</button>
+                    </span>
+                  ))}
+                  {(!profile?.industries || profile.industries.length === 0) && (
+                    <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>No industries set — add one below</span>
+                  )}
+                </div>
+                <form onSubmit={async (e) => {
+                  e.preventDefault();
+                  const input = e.target.elements.newIndustry;
+                  const val = input.value.trim();
+                  if (!val) return;
+                  const updated = [...(profile?.industries || []), val];
+                  await api('/profile', { method: 'PATCH', body: { industries: updated } });
+                  setProfile(prev => ({ ...prev, industries: updated }));
+                  input.value = '';
+                }} style={{ display: 'flex', gap: 8 }}>
+                  <input name="newIndustry" placeholder="e.g. FinTech, Healthcare, SaaS..."
+                    style={{
+                      flex: 1, padding: '10px 14px', background: 'var(--bg)',
+                      border: '1px solid var(--border)', borderRadius: 10, color: 'var(--text)',
+                      fontSize: 13, outline: 'none', fontFamily: 'inherit',
+                    }} />
+                  <button type="submit" style={{
+                    padding: '10px 18px', borderRadius: 10, border: '1px solid #60a5fa40',
+                    background: '#60a5fa15', color: '#60a5fa', fontSize: 12, fontWeight: 600,
+                    cursor: 'pointer', fontFamily: 'inherit',
+                  }}>Add</button>
+                </form>
+              </div>
+            </div>
+
+            {/* ── Notification Method ── */}
             <div style={{
               background: 'var(--surface)', border: '1px solid var(--border)',
               borderRadius: 18, padding: 28, marginBottom: 20,
@@ -899,6 +1068,7 @@ function Dashboard({ user, onLogout }) {
               </div>
             </div>
 
+            {/* ── Agent Schedule ── */}
             <div style={{
               background: 'var(--surface)', border: '1px solid var(--border)',
               borderRadius: 18, padding: 28, marginBottom: 20,
@@ -920,10 +1090,11 @@ function Dashboard({ user, onLogout }) {
                 ))}
               </div>
               <p style={{ fontSize: 13, color: 'var(--text-dim)', marginTop: 14, lineHeight: 1.6, fontFamily: "'Source Serif 4', serif" }}>
-                Each scan fetches jobs, runs matching, AI summarizes top results, and sends your notification.
+                Each scan uses your saved preferences above to fetch jobs, match against your profile, and send personalized alerts.
               </p>
             </div>
 
+            {/* ── Cost Transparency ── */}
             <div style={{
               background: 'var(--surface)', border: '1px solid var(--border)',
               borderRadius: 18, padding: 28,
