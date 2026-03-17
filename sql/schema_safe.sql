@@ -109,6 +109,35 @@ DROP POLICY IF EXISTS "Allow all for service role" ON notification_log;
 DROP POLICY IF EXISTS "Authenticated read jobs" ON jobs;
 CREATE POLICY "Authenticated read jobs" ON jobs FOR SELECT TO authenticated USING (true);
 
+-- ── User Experience / Feedback table ──
+CREATE TABLE IF NOT EXISTS user_experience (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  match_id UUID REFERENCES matches(id) ON DELETE SET NULL,
+  action TEXT NOT NULL,
+  rating INTEGER,
+  feedback_text TEXT,
+  metadata JSONB DEFAULT '{}',
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_experience_user ON user_experience(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_user_experience_action ON user_experience(action);
+
+ALTER TABLE user_experience ENABLE ROW LEVEL SECURITY;
+
+-- ── AI Insights Cache table ──
+CREATE TABLE IF NOT EXISTS ai_insights (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  insights JSONB NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_insights_user ON ai_insights(user_id, created_at DESC);
+
+ALTER TABLE ai_insights ENABLE ROW LEVEL SECURITY;
+
 -- ── Updated_at trigger ──
 CREATE OR REPLACE FUNCTION update_updated_at()
 RETURNS TRIGGER AS $$
