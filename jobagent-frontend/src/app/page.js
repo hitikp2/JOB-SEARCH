@@ -325,6 +325,209 @@ function Stat({ label, value, sub, color = '#a78bfa' }) {
   );
 }
 
+// ─── RESUME UPLOAD MODAL ───
+function ResumeUploadModal({ onClose, onComplete }) {
+  const [mode, setMode] = useState('file');
+  const [text, setText] = useState('');
+  const [file, setFile] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [result, setResult] = useState(null);
+  const [dragActive, setDragActive] = useState(false);
+
+  const acceptedTypes = [
+    'text/plain', 'application/pdf', 'image/jpeg', 'image/png', 'image/webp',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/msword',
+  ];
+
+  const handleFileSelect = (f) => {
+    if (!acceptedTypes.includes(f.type)) {
+      setError(`Unsupported file type. Use PDF, JPG, PNG, DOCX, or TXT.`);
+      return;
+    }
+    if (f.size > 10 * 1024 * 1024) {
+      setError('File too large. Max 10MB.');
+      return;
+    }
+    setFile(f);
+    setError('');
+  };
+
+  const handleExtract = async (e) => {
+    e?.preventDefault();
+    setError('');
+    setLoading(true);
+    try {
+      let data;
+      if (mode === 'file' && file) {
+        const formData = new FormData();
+        formData.append('resume', file);
+        const token = typeof window !== 'undefined' ? localStorage.getItem('ja_token') : null;
+        const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
+        const res = await fetch(`${API_URL}/profile/resume/upload`, {
+          method: 'POST',
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          body: formData,
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || `Upload failed: ${res.status}`);
+        }
+        data = await res.json();
+      } else {
+        data = await api('/profile/resume', { method: 'POST', body: { resume_text: text } });
+      }
+      setResult(data.profile);
+    } catch (err) {
+      setError(err.message);
+    }
+    setLoading(false);
+  };
+
+  const canSubmit = mode === 'file' ? !!file && !loading : text.length >= 50 && !loading;
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 1000,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)',
+    }} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div style={{
+        width: '100%', maxWidth: 560, maxHeight: '85vh', margin: 20,
+        background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 20,
+        overflow: 'auto', position: 'relative',
+      }}>
+        {/* Close */}
+        <button onClick={onClose} style={{
+          position: 'absolute', top: 14, right: 14, zIndex: 10,
+          background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8,
+          color: 'var(--text-muted)', fontSize: 18, cursor: 'pointer', padding: '4px 10px', lineHeight: 1,
+        }}>&times;</button>
+
+        <div style={{ padding: '36px 32px 32px' }}>
+          {result ? (
+            <>
+              <div style={{ textAlign: 'center', marginBottom: 24 }}>
+                <div style={{
+                  display: 'inline-flex', width: 48, height: 48, borderRadius: '50%',
+                  background: 'var(--green-soft)', border: '2px solid #34d39940',
+                  alignItems: 'center', justifyContent: 'center', fontSize: 22, marginBottom: 12,
+                }}>✓</div>
+                <h3 style={{ margin: '0 0 4px', fontSize: 18, fontWeight: 700 }}>Profile Updated</h3>
+                <p style={{ color: 'var(--text-muted)', fontSize: 13, margin: 0 }}>Your resume has been re-analyzed</p>
+              </div>
+              <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 20, marginBottom: 20 }}>
+                {result.primary_roles?.length > 0 && (
+                  <div style={{ marginBottom: 14 }}>
+                    <div style={{ fontSize: 10, color: 'var(--text-dim)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 6 }}>Roles</div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                      {result.primary_roles.map(r => <Tag key={r} color="#a78bfa">{r}</Tag>)}
+                    </div>
+                  </div>
+                )}
+                {result.skills?.length > 0 && (
+                  <div>
+                    <div style={{ fontSize: 10, color: 'var(--text-dim)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 6 }}>Skills</div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                      {result.skills.slice(0, 10).map(s => <Tag key={s} color="#34d399">{s}</Tag>)}
+                    </div>
+                  </div>
+                )}
+              </div>
+              <button onClick={() => { onComplete(); onClose(); }} style={{
+                width: '100%', padding: 13, border: 'none', borderRadius: 10,
+                background: 'var(--accent)', color: '#fff', fontSize: 14, fontWeight: 600,
+                cursor: 'pointer', fontFamily: 'inherit',
+              }}>Done</button>
+            </>
+          ) : (
+            <>
+              <div style={{ textAlign: 'center', marginBottom: 24 }}>
+                <div style={{ fontSize: 32, marginBottom: 8, opacity: 0.5 }}>📄</div>
+                <h3 style={{ margin: '0 0 4px', fontSize: 18, fontWeight: 700 }}>Update Resume</h3>
+                <p style={{ color: 'var(--text-muted)', fontSize: 13, margin: 0 }}>Upload a new file or paste updated text</p>
+              </div>
+
+              {/* Mode Toggle */}
+              <div style={{ display: 'flex', gap: 4, marginBottom: 18, background: 'var(--surface)', borderRadius: 10, padding: 4 }}>
+                {['file', 'text'].map(m => (
+                  <button key={m} onClick={() => setMode(m)} style={{
+                    flex: 1, padding: '9px 0', border: 'none', borderRadius: 8, cursor: 'pointer',
+                    fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit', transition: 'all 0.2s',
+                    background: mode === m ? 'var(--bg)' : 'transparent',
+                    color: mode === m ? 'var(--text)' : 'var(--text-dim)',
+                  }}>{m === 'file' ? 'Upload File' : 'Paste Text'}</button>
+                ))}
+              </div>
+
+              {mode === 'file' ? (
+                <div
+                  onDragOver={e => { e.preventDefault(); setDragActive(true); }}
+                  onDragLeave={() => setDragActive(false)}
+                  onDrop={e => { e.preventDefault(); setDragActive(false); e.dataTransfer.files?.[0] && handleFileSelect(e.dataTransfer.files[0]); }}
+                  onClick={() => document.getElementById('resume-file-input')?.click()}
+                  style={{
+                    border: `2px dashed ${dragActive ? 'var(--accent)' : 'var(--border)'}`,
+                    borderRadius: 14, padding: file ? 18 : 44, textAlign: 'center', cursor: 'pointer',
+                    background: dragActive ? 'var(--accent-soft)' : 'var(--surface)', transition: 'all 0.2s',
+                  }}
+                >
+                  <input id="resume-file-input" type="file" accept=".txt,.pdf,.jpg,.jpeg,.png,.webp,.doc,.docx"
+                    onChange={e => e.target.files?.[0] && handleFileSelect(e.target.files[0])}
+                    style={{ display: 'none' }} />
+                  {file ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, textAlign: 'left' }}>
+                      <div style={{
+                        width: 40, height: 40, borderRadius: 10, background: 'var(--accent-soft)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, flexShrink: 0,
+                      }}>✓</div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{file.name}</div>
+                        <div style={{ color: 'var(--text-dim)', fontSize: 11, marginTop: 2 }}>{(file.size / 1024).toFixed(1)} KB</div>
+                      </div>
+                      <button onClick={e => { e.stopPropagation(); setFile(null); }} style={{
+                        background: '#ef444418', border: 'none', borderRadius: 8, padding: '5px 10px',
+                        color: '#ef4444', fontSize: 11, cursor: 'pointer', fontWeight: 600,
+                      }}>Remove</button>
+                    </div>
+                  ) : (
+                    <>
+                      <div style={{ fontSize: 24, marginBottom: 8, opacity: 0.6 }}>📁</div>
+                      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Drag & drop your resume</div>
+                      <div style={{ color: 'var(--text-dim)', fontSize: 12 }}>or click to browse · PDF, JPG, PNG, DOCX, TXT</div>
+                    </>
+                  )}
+                </div>
+              ) : (
+                <textarea value={text} onChange={e => setText(e.target.value)}
+                  placeholder="Paste your updated resume text here..."
+                  style={{
+                    width: '100%', minHeight: 200, padding: 16, background: 'var(--surface)',
+                    border: '1px solid var(--border)', borderRadius: 14, color: 'var(--text)',
+                    fontSize: 13, lineHeight: 1.7, resize: 'vertical', outline: 'none',
+                    fontFamily: "'Source Serif 4', serif", boxSizing: 'border-box',
+                  }}
+                />
+              )}
+
+              {error && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 8 }}>{error}</p>}
+
+              <button onClick={handleExtract} disabled={!canSubmit} style={{
+                width: '100%', padding: 13, marginTop: 16, border: 'none', borderRadius: 10,
+                background: !canSubmit ? 'var(--text-dim)' : 'var(--accent)', color: '#fff',
+                fontSize: 14, fontWeight: 600, cursor: !canSubmit ? 'not-allowed' : 'pointer',
+                fontFamily: 'inherit', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+              }}>
+                {loading ? '⚙️ Processing...' : '⚡ Re-Extract Profile'}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── DASHBOARD ───
 function Dashboard({ user, onLogout }) {
   const [tab, setTab] = useState('matches');
@@ -332,6 +535,7 @@ function Dashboard({ user, onLogout }) {
   const [stats, setStats] = useState({ total_matches: 0, today_matches: 0, notifications_sent: 0, avg_score: 0 });
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [showResumeUpload, setShowResumeUpload] = useState(false);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -500,6 +704,21 @@ function Dashboard({ user, onLogout }) {
                 <PrefItem label="Notifications" value={profile.notification_method} />
               </div>
             </div>
+
+            {/* Update Resume Button */}
+            <button onClick={() => setShowResumeUpload(true)} style={{
+              width: '100%', padding: 14, marginTop: 20, borderRadius: 12,
+              background: 'var(--surface)', border: '1px solid var(--border)',
+              color: 'var(--text-muted)', fontSize: 13, fontWeight: 600,
+              cursor: 'pointer', fontFamily: 'inherit',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+              transition: 'all 0.2s',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.color = 'var(--accent)'; }}
+            onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-muted)'; }}
+            >
+              📄 Update Resume
+            </button>
           </div>
         )}
 
@@ -584,6 +803,14 @@ function Dashboard({ user, onLogout }) {
           </div>
         )}
       </main>
+
+      {/* Resume Re-Upload Modal */}
+      {showResumeUpload && (
+        <ResumeUploadModal
+          onClose={() => setShowResumeUpload(false)}
+          onComplete={() => loadData()}
+        />
+      )}
     </div>
   );
 }
