@@ -363,7 +363,7 @@ function ResumeUploadModal({ onClose, onComplete }) {
         const formData = new FormData();
         formData.append('resume', file);
         const token = typeof window !== 'undefined' ? localStorage.getItem('ja_token') : null;
-        const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
+        const API_URL = process.env.NEXT_PUBLIC_API_URL || (typeof window !== 'undefined' && window.location.hostname !== 'localhost' ? '/api' : 'http://localhost:3001/api');
         const res = await fetch(`${API_URL}/profile/resume/upload`, {
           method: 'POST',
           headers: token ? { Authorization: `Bearer ${token}` } : {},
