@@ -388,15 +388,20 @@
         api('/experience', { method:'POST', body:{ action, match_id: matchId || null } }).catch(()=>{});
       }, []);
 
-      const handleTestRun = async () => {
-        setTestRunning(true); setTestResult(null);
+      const [scanMode, setScanMode] = useState(null);
+
+      const handleTestRun = async (mode = 'full') => {
+        setTestRunning(true); setTestResult(null); setScanMode(mode);
         try {
           trackAction('test_run');
-          const res = await api('/admin/run-worker', { method:'POST' });
-          setTestResult({ ok:true, msg: res.message || 'Worker completed!' });
+          const res = await api('/admin/run-worker', { method:'POST', body: { mode } });
+          const r = res.result || {};
+          const modeLabel = mode === 'quick' ? 'Quick Scan' : mode === 'ai' ? 'AI Analysis' : 'Full Scan';
+          const msg = `${modeLabel}: ${r.matches || 0} matches from ${r.jobs || 0} jobs in ${r.elapsed || '?'}`;
+          setTestResult({ ok:true, msg });
           loadData();
         } catch(e) { setTestResult({ ok:false, msg: e.message }); }
-        setTestRunning(false);
+        setTestRunning(false); setScanMode(null);
       };
 
       return (
@@ -435,13 +440,19 @@
                 ))}
               </div>
 
-              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16 }}>
+              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16, flexWrap:'wrap', gap:10 }}>
                 <h2 style={{ fontSize:18, fontWeight:600 }}>Recent Matches</h2>
-                <div style={{ display:'flex', gap:10, alignItems:'center' }}>
-                  <button onClick={handleTestRun} disabled={testRunning} className="btn" style={{ display:'flex', alignItems:'center', gap:6, padding:'8px 16px', background:testRunning?'var(--text-dim)':'linear-gradient(135deg,#34d39920,#34d39910)', border:'1px solid #34d39940', borderRadius:8, color:testRunning?'var(--text-dim)':'#34d399', fontSize:12 }}>
-                    {testRunning ? '⏳ Running...' : '🧪 Test Matching'}
+                <div style={{ display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' }}>
+                  <button onClick={()=>handleTestRun('quick')} disabled={testRunning} className="btn" style={{ display:'flex', alignItems:'center', gap:5, padding:'7px 14px', background:scanMode==='quick'?'var(--text-dim)':'linear-gradient(135deg,#60a5fa20,#60a5fa10)', border:'1px solid #60a5fa40', borderRadius:8, color:scanMode==='quick'?'var(--text-dim)':'#60a5fa', fontSize:11.5 }}>
+                    {scanMode==='quick' ? 'Scanning...' : 'Quick Scan'}
                   </button>
-                  <span style={{ fontSize:11, color:'var(--text-dim)', fontStyle:'italic', fontFamily:"'Source Serif 4',serif" }}>Updated 3x daily</span>
+                  <button onClick={()=>handleTestRun('ai')} disabled={testRunning} className="btn" style={{ display:'flex', alignItems:'center', gap:5, padding:'7px 14px', background:scanMode==='ai'?'var(--text-dim)':'linear-gradient(135deg,#fbbf2420,#fbbf2410)', border:'1px solid #fbbf2440', borderRadius:8, color:scanMode==='ai'?'var(--text-dim)':'#fbbf24', fontSize:11.5 }}>
+                    {scanMode==='ai' ? 'Analyzing...' : 'AI Analyze Top 25'}
+                  </button>
+                  <button onClick={()=>handleTestRun('full')} disabled={testRunning} className="btn" style={{ display:'flex', alignItems:'center', gap:5, padding:'7px 14px', background:scanMode==='full'?'var(--text-dim)':'linear-gradient(135deg,#34d39920,#34d39910)', border:'1px solid #34d39940', borderRadius:8, color:scanMode==='full'?'var(--text-dim)':'#34d399', fontSize:11.5 }}>
+                    {scanMode==='full' ? 'Running...' : 'Full Scan'}
+                  </button>
+                  <span style={{ fontSize:10, color:'var(--text-dim)', fontStyle:'italic', fontFamily:"'Source Serif 4',serif" }}>Auto 3x daily</span>
                 </div>
               </div>
 
@@ -458,9 +469,17 @@
                   <div style={{fontSize:36,marginBottom:12}}>📭</div>
                   <h3>No matches yet</h3>
                   <p style={{color:'var(--text-muted)',fontSize:14,marginTop:6,marginBottom:16}}>Your agent is searching. Matches appear after the next scan.</p>
-                  <button onClick={handleTestRun} disabled={testRunning} className="btn" style={{ padding:'10px 24px', border:'1px solid #34d39940', background:'#34d39915', color:'#34d399', fontSize:13 }}>
-                    {testRunning ? 'Running...' : '🧪 Run Test Scan Now'}
-                  </button>
+                  <div style={{ display:'flex', gap:10, justifyContent:'center', flexWrap:'wrap' }}>
+                    <button onClick={()=>handleTestRun('quick')} disabled={testRunning} className="btn" style={{ padding:'10px 20px', border:'1px solid #60a5fa40', background:'#60a5fa15', color:'#60a5fa', fontSize:13 }}>
+                      {scanMode==='quick' ? 'Scanning...' : 'Quick Scan (~30s)'}
+                    </button>
+                    <button onClick={()=>handleTestRun('ai')} disabled={testRunning} className="btn" style={{ padding:'10px 20px', border:'1px solid #fbbf2440', background:'#fbbf2415', color:'#fbbf24', fontSize:13 }}>
+                      {scanMode==='ai' ? 'Analyzing...' : 'AI Analyze Top 25'}
+                    </button>
+                    <button onClick={()=>handleTestRun('full')} disabled={testRunning} className="btn" style={{ padding:'10px 20px', border:'1px solid #34d39940', background:'#34d39915', color:'#34d399', fontSize:13 }}>
+                      {scanMode==='full' ? 'Running...' : 'Full Scan (~2min)'}
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <div style={{ display:'flex', flexDirection:'column', gap:10 }}>

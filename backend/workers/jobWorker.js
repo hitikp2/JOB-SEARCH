@@ -1,7 +1,7 @@
 import supabase from '../utils/supabase.js';
 import { fetchJobsForUsers, fetchAllJobs, generateSampleJobs } from '../services/jobSearch.js';
 import { matchJobsToUser } from '../services/matching.js';
-import { summarizeJobs } from '../services/ai.js';
+import { summarizeJobs, analyzeTopJobs } from '../services/ai.js';
 import { sendNotification } from '../services/notifications.js';
 import dotenv from 'dotenv';
 dotenv.config();
@@ -191,6 +191,173 @@ export async function runJobWorker() {
   console.log(`[Worker] Jobs: ${storedCount} | Users: ${users.length} | Sent: ${notificationCount} | Time: ${elapsed}s`);
 
   return { jobs: storedCount, users: users.length, notifications: notificationCount, elapsed: `${elapsed}s` };
+}
+
+/**
+ * Quick Scan: Only uses 3 queries max, skips notification, returns faster
+ */
+export async function runQuickScan() {
+  const startTime = Date.now();
+  console.log('[QuickScan] ──────────── Starting ────────────');
+
+  const { data: users, error: usersErr } = await supabase
+    .from('users').select('*').eq('profile_complete', true);
+
+  if (usersErr || !users?.length) {
+    console.log('[QuickScan] No users with complete profiles.');
+    return { jobs: 0, users: 0, matches: 0, mode: 'quick' };
+  }
+
+  // Only use first 3 queries for speed
+  const user = users[0];
+  const roles = (user.primary_roles || []).slice(0, 2);
+  const queries = [];
+  for (const role of roles) {
+    queries.push(`${role} remote`);
+    if (queries.length >= 3) break;
+    const loc = (user.preferred_locations || [])[0];
+    if (loc) queries.push(`${role} ${loc}`);
+    if (queries.length >= 3) break;
+  }
+  if (queries.length === 0 && roles.length > 0) queries.push(roles[0]);
+
+  console.log(`[QuickScan] Searching ${queries.length} queries: ${queries.join(' | ')}`);
+
+  const allJobs = [];
+  const seenUrls = new Set();
+  for (const query of queries) {
+    try {
+      const url = new URL('https://jsearch.p.rapidapi.com/search');
+      url.searchParams.set('query', query);
+      url.searchParams.set('page', '1');
+      url.searchParams.set('num_pages', '1');
+      url.searchParams.set('date_posted', 'today');
+      const res = await fetch(url.toString(), {
+        headers: { 'X-RapidAPI-Key': process.env.RAPIDAPI_KEY, 'X-RapidAPI-Host': 'jsearch.p.rapidapi.com' }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        for (const raw of (data.data || [])) {
+          const job = {
+            title: raw.job_title || '', company: raw.employer_name || '',
+            location: raw.job_city ? `${raw.job_city}, ${raw.job_state || ''}`.trim() : raw.job_is_remote ? 'Remote' : 'Unknown',
+            salary: raw.job_min_salary && raw.job_max_salary ? `$${Math.round(raw.job_min_salary/1000)}k–$${Math.round(raw.job_max_salary/1000)}k` : null,
+            description: (raw.job_description || '').slice(0, 600),
+            url: raw.job_apply_link || raw.job_google_link || '',
+            source: 'jsearch', posted_date: raw.job_posted_at_datetime_utc || new Date().toISOString()
+          };
+          if (job.url && !seenUrls.has(job.url)) { seenUrls.add(job.url); allJobs.push(job); }
+        }
+      }
+    } catch (err) { console.error(`[QuickScan] Query failed:`, err.message); }
+    await new Promise(r => setTimeout(r, 300));
+  }
+
+  console.log(`[QuickScan] Found ${allJobs.length} jobs`);
+
+  // Store jobs
+  let stored = 0;
+  for (const job of allJobs.filter(j => j.url)) {
+    try {
+      const { error } = await supabase.from('jobs').upsert({
+        title: job.title, company: job.company, location: job.location,
+        salary: job.salary, description: job.description, url: job.url,
+        source: job.source, posted_date: job.posted_date
+      }, { onConflict: 'url', ignoreDuplicates: true });
+      if (!error) stored++;
+    } catch (e) {}
+  }
+
+  // Match from DB
+  const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const { data: recentJobs } = await supabase.from('jobs').select('*')
+    .gte('created_at', oneDayAgo).order('created_at', { ascending: false }).limit(500);
+
+  const jobPool = recentJobs || [];
+  const matches = matchJobsToUser(user, jobPool);
+  console.log(`[QuickScan] ${matches.length} matches (score ≥ 30)`);
+
+  // Store matches without notification
+  for (const m of matches) {
+    try {
+      await supabase.from('matches').upsert({
+        user_id: user.id, job_id: m.job.id, score: m.score,
+        ai_summary: '', sent: false
+      }, { onConflict: 'user_id,job_id' });
+    } catch (e) {}
+  }
+
+  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+  console.log(`[QuickScan] ──────────── Done in ${elapsed}s ────────────`);
+  return { jobs: stored, users: users.length, matches: matches.length, mode: 'quick', elapsed: `${elapsed}s` };
+}
+
+/**
+ * AI Analysis: Uses AI to score top 25 jobs from DB against user profile
+ * Much faster - no new API job searches, just analyzes existing jobs
+ */
+export async function runAIAnalysis() {
+  const startTime = Date.now();
+  console.log('[AIAnalysis] ──────────── Starting ────────────');
+
+  const { data: users, error: usersErr } = await supabase
+    .from('users').select('*').eq('profile_complete', true);
+
+  if (usersErr || !users?.length) {
+    console.log('[AIAnalysis] No users with complete profiles.');
+    return { jobs: 0, users: 0, matches: 0, mode: 'ai' };
+  }
+
+  // Get recent jobs from DB (already stored from previous scans)
+  const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+  const { data: recentJobs } = await supabase.from('jobs').select('*')
+    .gte('created_at', threeDaysAgo).order('created_at', { ascending: false }).limit(100);
+
+  const jobPool = recentJobs || [];
+  console.log(`[AIAnalysis] ${jobPool.length} recent jobs in pool`);
+
+  if (jobPool.length === 0) {
+    console.log('[AIAnalysis] No jobs in DB. Run a scan first.');
+    return { jobs: 0, users: users.length, matches: 0, mode: 'ai' };
+  }
+
+  let totalMatches = 0;
+
+  for (const user of users) {
+    console.log(`[AIAnalysis] Analyzing for: ${user.email}`);
+    try {
+      const aiResults = await analyzeTopJobs(user, jobPool);
+      const scored = Array.isArray(aiResults) ? aiResults : [];
+      const topMatches = scored.filter(r => r.score >= 40).sort((a, b) => b.score - a.score).slice(0, 25);
+
+      console.log(`[AIAnalysis]   → AI scored ${scored.length} jobs, ${topMatches.length} above threshold`);
+      topMatches.slice(0, 5).forEach(r => {
+        const job = jobPool[r.index];
+        if (job) console.log(`[AIAnalysis]     ${r.score}pts: ${job.title} @ ${job.company} — ${r.summary}`);
+      });
+
+      // Store AI-scored matches
+      for (const result of topMatches) {
+        const job = jobPool[result.index];
+        if (!job?.id) continue;
+        try {
+          await supabase.from('matches').upsert({
+            user_id: user.id, job_id: job.id,
+            score: result.score,
+            ai_summary: result.summary || '',
+            sent: false
+          }, { onConflict: 'user_id,job_id' });
+          totalMatches++;
+        } catch (e) {}
+      }
+    } catch (err) {
+      console.error(`[AIAnalysis] AI failed for ${user.email}:`, err.message);
+    }
+  }
+
+  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+  console.log(`[AIAnalysis] ──────────── Done in ${elapsed}s ────────────`);
+  return { jobs: jobPool.length, users: users.length, matches: totalMatches, mode: 'ai', elapsed: `${elapsed}s` };
 }
 
 if (process.argv[1]?.endsWith('jobWorker.js')) {

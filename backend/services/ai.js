@@ -21,7 +21,7 @@ async function callGemini(systemPrompt, userMessage) {
       contents: [{ parts: [{ text: userMessage }] }],
       generationConfig: {
         temperature: 0.1,
-        maxOutputTokens: 500,
+        maxOutputTokens: 2000,
         responseMimeType: 'application/json'
       }
     })
@@ -168,6 +168,45 @@ User Activity (${experiences.length} actions):
 ${experiences.slice(0, 10).map(e => `- ${e.action}${e.rating ? ` (rated ${e.rating}/5)` : ''}${e.feedback_text ? `: ${e.feedback_text}` : ''}`).join('\n')}`;
 
   return callAI(systemPrompt, context);
+}
+
+// ============================================
+// AI JOB ANALYSIS - Score top 25 jobs for user
+// ============================================
+export async function analyzeTopJobs(user, jobs) {
+  const userProfile = {
+    roles: (user.primary_roles || []).join(', '),
+    skills: (user.skills || []).join(', '),
+    level: user.seniority_level || 'unknown',
+    experience: user.years_experience || 0,
+    locations: (user.preferred_locations || []).join(', '),
+    remote: user.remote_preference || 'flexible',
+    salary: user.salary_expectation || 'not specified'
+  };
+
+  const jobList = jobs.slice(0, 25).map((j, i) => ({
+    index: i,
+    title: j.title,
+    company: j.company,
+    location: j.location,
+    salary: j.salary || 'Not listed',
+    description: (j.description || '').slice(0, 300)
+  }));
+
+  const systemPrompt = `You are a job matching AI. Score each job's relevance to the candidate profile.
+Consider: role fit, skill overlap, location match, salary range, seniority alignment, and transferable skills.
+Be generous with scoring - consider adjacent roles and transferable experience.
+Return ONLY valid JSON array:
+[{"index":0,"score":85,"summary":"Brief 15-word reason this job fits or doesn't"}]
+Score 0-100. Include ALL jobs. Sort by score descending.`;
+
+  const userMessage = `Candidate Profile:
+${JSON.stringify(userProfile)}
+
+Jobs to analyze:
+${JSON.stringify(jobList)}`;
+
+  return callAI(systemPrompt, userMessage);
 }
 
 // ============================================

@@ -9,7 +9,7 @@ import profileRoutes from './routes/profile.js';
 import jobRoutes from './routes/jobs.js';
 import matchRoutes from './routes/matches.js';
 import experienceRoutes from './routes/experience.js';
-import { runJobWorker } from './workers/jobWorker.js';
+import { runJobWorker, runQuickScan, runAIAnalysis } from './workers/jobWorker.js';
 
 dotenv.config();
 
@@ -45,7 +45,15 @@ app.get('/api/health', (req, res) => {
 
 app.post('/api/admin/run-worker', async (req, res) => {
   try {
-    const result = await runJobWorker();
+    const mode = req.body?.mode || 'full';
+    let result;
+    if (mode === 'quick') {
+      result = await runQuickScan();
+    } else if (mode === 'ai') {
+      result = await runAIAnalysis();
+    } else {
+      result = await runJobWorker();
+    }
     res.json({ success: true, message: 'Worker completed', result });
   } catch (err) {
     res.status(500).json({ error: err.message });
