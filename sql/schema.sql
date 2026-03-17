@@ -96,6 +96,20 @@ CREATE INDEX idx_user_activity_user ON user_activity(user_id, created_at DESC);
 CREATE INDEX idx_user_activity_action ON user_activity(action);
 
 -- ============================================
+-- Q&A HISTORY TABLE
+-- ============================================
+CREATE TABLE qa_history (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  questions TEXT NOT NULL,
+  job_description TEXT,
+  answers TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_qa_history_user ON qa_history(user_id, created_at DESC);
+
+-- ============================================
 -- ROW LEVEL SECURITY
 -- ============================================
 ALTER TABLE users ENABLE ROW LEVEL SECURITY;
@@ -138,4 +152,11 @@ ALTER TABLE user_activity ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Users read own activity" ON user_activity
   FOR SELECT USING (auth.uid() = user_id);
 CREATE POLICY "Users insert own activity" ON user_activity
+  FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+-- Q&A history: users see only their own
+ALTER TABLE qa_history ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Users read own qa" ON qa_history
+  FOR SELECT USING (auth.uid() = user_id);
+CREATE POLICY "Users insert own qa" ON qa_history
   FOR INSERT WITH CHECK (auth.uid() = user_id);

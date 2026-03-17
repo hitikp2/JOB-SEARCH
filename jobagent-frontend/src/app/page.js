@@ -556,8 +556,18 @@ function Dashboard({ user, onLogout }) {
 
   useEffect(() => { loadData(); }, [loadData]);
 
+  // Q&A state
+  const [qaQuestions, setQaQuestions] = useState('');
+  const [qaJobDesc, setQaJobDesc] = useState('');
+  const [qaAnswers, setQaAnswers] = useState('');
+  const [qaLoading, setQaLoading] = useState(false);
+  const [qaError, setQaError] = useState('');
+  const [qaHistory, setQaHistory] = useState([]);
+  const [qaShowHistory, setQaShowHistory] = useState(false);
+
   const navItems = [
     { id: 'matches', label: 'Matches', icon: '🎯' },
+    { id: 'qa', label: 'Q&A Helper', icon: '💬' },
     { id: 'profile', label: 'Profile', icon: '👤' },
     { id: 'settings', label: 'Settings', icon: '⚙️' },
   ];
@@ -649,6 +659,177 @@ function Dashboard({ user, onLogout }) {
               </div>
             )}
           </>
+        )}
+
+        {/* Q&A HELPER TAB */}
+        {tab === 'qa' && (
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
+              <h2 style={{ margin: 0, fontSize: 18, fontWeight: 600 }}>Application Q&A Helper</h2>
+              <button onClick={async () => {
+                setQaShowHistory(!qaShowHistory);
+                if (!qaShowHistory && qaHistory.length === 0) {
+                  try {
+                    const data = await api('/qa/history');
+                    setQaHistory(data.history || []);
+                  } catch {}
+                }
+              }} style={{
+                padding: '7px 14px', border: '1px solid var(--border)', borderRadius: 8,
+                background: qaShowHistory ? 'var(--accent-soft)' : 'transparent',
+                color: qaShowHistory ? 'var(--accent)' : 'var(--text-dim)',
+                fontSize: 12, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500,
+              }}>
+                {qaShowHistory ? '← New Question' : '📋 History'}
+              </button>
+            </div>
+
+            {!qaShowHistory ? (
+              <div style={{
+                background: 'var(--surface)', border: '1px solid var(--border)',
+                borderRadius: 18, padding: 28,
+              }}>
+                <p style={{ color: 'var(--text-muted)', fontSize: 13, margin: '0 0 20px', lineHeight: 1.6 }}>
+                  Paste job application questions below. AI will craft personalized answers using your saved resume.
+                </p>
+
+                {/* Job Description (optional) */}
+                <div style={{ marginBottom: 16 }}>
+                  <div style={{ fontSize: 10, color: 'var(--text-dim)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 8 }}>
+                    Job Description <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>(optional — helps tailor answers)</span>
+                  </div>
+                  <textarea
+                    value={qaJobDesc}
+                    onChange={e => setQaJobDesc(e.target.value)}
+                    placeholder="Paste the job description or posting here..."
+                    style={{
+                      width: '100%', minHeight: 80, padding: 14, background: 'var(--bg)',
+                      border: '1px solid var(--border)', borderRadius: 12, color: 'var(--text)',
+                      fontSize: 13, lineHeight: 1.6, resize: 'vertical', outline: 'none',
+                      fontFamily: "'Source Serif 4', serif", boxSizing: 'border-box',
+                    }}
+                  />
+                </div>
+
+                {/* Questions */}
+                <div style={{ marginBottom: 16 }}>
+                  <div style={{ fontSize: 10, color: 'var(--text-dim)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 8 }}>
+                    Application Questions
+                  </div>
+                  <textarea
+                    value={qaQuestions}
+                    onChange={e => setQaQuestions(e.target.value)}
+                    placeholder={"Paste your questions here, e.g.:\n\n1. Why are you interested in this role?\n2. Describe a challenging project you worked on.\n3. What are your salary expectations?"}
+                    style={{
+                      width: '100%', minHeight: 160, padding: 14, background: 'var(--bg)',
+                      border: '1px solid var(--border)', borderRadius: 12, color: 'var(--text)',
+                      fontSize: 13, lineHeight: 1.6, resize: 'vertical', outline: 'none',
+                      fontFamily: "'Source Serif 4', serif", boxSizing: 'border-box',
+                    }}
+                  />
+                </div>
+
+                {qaError && <p style={{ color: 'var(--red)', fontSize: 12, marginBottom: 12 }}>{qaError}</p>}
+
+                <button
+                  onClick={async () => {
+                    setQaError('');
+                    setQaAnswers('');
+                    setQaLoading(true);
+                    try {
+                      const data = await api('/qa/answer', {
+                        method: 'POST',
+                        body: { questions: qaQuestions, job_description: qaJobDesc },
+                      });
+                      setQaAnswers(data.answers);
+                    } catch (err) {
+                      setQaError(err.message);
+                    }
+                    setQaLoading(false);
+                  }}
+                  disabled={qaLoading || qaQuestions.trim().length < 10}
+                  style={{
+                    width: '100%', padding: 14, border: 'none', borderRadius: 10,
+                    background: qaLoading || qaQuestions.trim().length < 10 ? 'var(--text-dim)' : 'var(--accent)',
+                    color: '#fff', fontSize: 14, fontWeight: 600,
+                    cursor: qaLoading || qaQuestions.trim().length < 10 ? 'not-allowed' : 'pointer',
+                    fontFamily: 'inherit', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                  }}
+                >
+                  {qaLoading ? '⚙️ Generating answers...' : '⚡ Generate Answers'}
+                </button>
+
+                {/* Answers */}
+                {qaAnswers && (
+                  <div style={{
+                    marginTop: 24, background: 'var(--bg)', border: '1px solid var(--border)',
+                    borderRadius: 14, padding: 24, position: 'relative',
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                      <div style={{ fontSize: 10, color: 'var(--text-dim)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1.5 }}>
+                        AI-Generated Answers
+                      </div>
+                      <button onClick={() => {
+                        navigator.clipboard.writeText(qaAnswers);
+                      }} style={{
+                        padding: '5px 12px', border: '1px solid var(--border)', borderRadius: 6,
+                        background: 'transparent', color: 'var(--text-dim)', fontSize: 11,
+                        cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500,
+                      }}>
+                        📋 Copy All
+                      </button>
+                    </div>
+                    <div style={{
+                      fontSize: 14, color: 'var(--text)', lineHeight: 1.8,
+                      fontFamily: "'Source Serif 4', serif", whiteSpace: 'pre-wrap',
+                    }}>
+                      {qaAnswers}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              /* Q&A History */
+              <div>
+                {qaHistory.length === 0 ? (
+                  <div style={{
+                    textAlign: 'center', padding: 60, background: 'var(--surface)',
+                    border: '1px solid var(--border)', borderRadius: 16,
+                  }}>
+                    <div style={{ fontSize: 36, marginBottom: 12 }}>💬</div>
+                    <h3 style={{ margin: '0 0 6px' }}>No Q&A history yet</h3>
+                    <p style={{ color: 'var(--text-muted)', fontSize: 14 }}>Your answered questions will appear here.</p>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                    {qaHistory.map(h => (
+                      <div key={h.id} style={{
+                        background: 'var(--surface)', border: '1px solid var(--border)',
+                        borderRadius: 16, padding: 22, cursor: 'pointer',
+                      }} onClick={() => {
+                        setQaQuestions(h.questions);
+                        setQaJobDesc(h.job_description || '');
+                        setQaAnswers(h.answers);
+                        setQaShowHistory(false);
+                      }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                          <Tag color="#60a5fa">{timeAgo(h.created_at)}</Tag>
+                          <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>Click to view</span>
+                        </div>
+                        <div style={{
+                          fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.5,
+                          overflow: 'hidden', textOverflow: 'ellipsis',
+                          display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical',
+                        }}>
+                          {h.questions}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         )}
 
         {/* PROFILE TAB */}
